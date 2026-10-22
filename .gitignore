@@ -12,3 +12,6 @@ kubeconfig.yaml
 *-state-backup.json
 *.pem
 *.key
+sbom.cdx.json
+*-report.sarif
+npm-audit.json

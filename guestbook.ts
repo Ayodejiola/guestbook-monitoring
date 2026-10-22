@@ -48,7 +48,7 @@ export function createGuestbook(args: GuestbookArgs): GuestbookResult {
                             },
                             {
                                 name: "metrics",
-                                image: "oliver006/redis_exporter:v1.62.0-alpine",
+                                image: "oliver006/redis_exporter:v1.95.0-alpine",
                                 resources: { requests: { cpu: "25m", memory: "32Mi" } },
                                 ports: [{ name: "metrics", containerPort: 9121 }],
                             },
@@ -114,7 +114,7 @@ export function createGuestbook(args: GuestbookArgs): GuestbookResult {
                             },
                             {
                                 name: "metrics",
-                                image: "oliver006/redis_exporter:v1.62.0-alpine",
+                                image: "oliver006/redis_exporter:v1.95.0-alpine",
                                 resources: { requests: { cpu: "25m", memory: "32Mi" } },
                                 ports: [{ name: "metrics", containerPort: 9121 }],
                             },

@@ -193,7 +193,7 @@ stages:
             displayName: "Install Trivy"
           - script: |
               set -eu
-              images="gcr.io/google-samples/gb-frontend:v5 redis:7.2-alpine oliver006/redis_exporter:v1.62.0-alpine"
+              images="gcr.io/google-samples/gb-frontend:v5 redis:7.2-alpine oliver006/redis_exporter:v1.95.0-alpine"
               status=0
               for img in $images; do
                 echo "=== Scanning $img ==="
