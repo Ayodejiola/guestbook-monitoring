@@ -1,0 +1,6 @@
+# Force LF line endings regardless of platform. dashboard.json's exact bytes
+# are embedded into a Kubernetes ConfigMap by monitoring.ts - if Windows and
+# Linux checkouts disagree on line endings, `pulumi preview` reports spurious
+# drift on every run on a CRLF-checkout machine. Keep everything text-based
+# reproducible across OSes (local machines and CI agents alike).
+* text=auto eol=lf

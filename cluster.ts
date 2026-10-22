@@ -43,9 +43,7 @@ export const cluster = new containerservice.ManagedCluster("guestbook-aks", {
     linuxProfile: {
         adminUsername: "azureuser",
         ssh: {
-            publicKeys: [
-                { keyData: sshKey.publicKeyOpenssh },
-            ],
+            publicKeys: [{ keyData: sshKey.publicKeyOpenssh }],
         },
     },
     networkProfile: {
@@ -61,6 +59,6 @@ const credentials = containerservice.listManagedClusterUserCredentialsOutput({
     resourceName: cluster.name,
 });
 
-export const kubeconfig = credentials.kubeconfigs.apply(kubeconfigs =>
+export const kubeconfig = credentials.kubeconfigs.apply((kubeconfigs) =>
     Buffer.from(kubeconfigs[0].value, "base64").toString("utf8"),
 );

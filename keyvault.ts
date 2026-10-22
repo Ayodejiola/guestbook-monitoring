@@ -60,10 +60,14 @@ export function storeSecret(
     resourceGroup: resources.ResourceGroup,
     value: pulumi.Input<string>,
 ): keyvault.Secret {
-    return new keyvault.Secret(name, {
-        resourceGroupName: resourceGroup.name,
-        vaultName: vault.name,
-        secretName: name,
-        properties: { value },
-    }, { dependsOn: [vault] });
+    return new keyvault.Secret(
+        name,
+        {
+            resourceGroupName: resourceGroup.name,
+            vaultName: vault.name,
+            secretName: name,
+            properties: { value },
+        },
+        { dependsOn: [vault] },
+    );
 }
