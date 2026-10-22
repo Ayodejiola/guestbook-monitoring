@@ -279,36 +279,16 @@ assumed):
   (secrets/dependencies/containers/SBOM) stage logic has been run locally with
   the exact same commands the pipeline uses - see "Security findings" below for
   real results.
+- **Azure RM service connection** `guestbook-monitoring-azurerm` (`isReady:
+  true`), backed by a dedicated service principal (`guestbook-monitoring-ado`)
+  scoped to just the two resource groups this project uses (`Contributor` on
+  `guestbook-rgf48916b4` and `guestbook-cicd-rg` only, not the subscription).
+  That service principal also has Key Vault access (`ciServicePrincipalObjectId`
+  in `Pulumi.dev.yaml`), verified via `az keyvault show` showing both access
+  policy entries live.
 
 **Not yet connected** - documented rather than silently skipped:
-1. **Azure RM service connection** (`guestbook-monitoring-azurerm`), needed by
-   the `PulumiPreview` and `Deploy` jobs to authenticate to Azure. Creating its
-   service principal requires an IAM role assignment, which this environment's
-   operating rules require a human to perform directly rather than an agent.
-   Exact command (scoped to only the two resource groups this project touches,
-   not the whole subscription):
-
-   ```bash
-   SUB_ID=$(az account show --query id -o tsv)
-   az ad sp create-for-rbac --name "guestbook-monitoring-ado" --role Contributor \
-     --scopes "/subscriptions/$SUB_ID/resourceGroups/guestbook-rgf48916b4" \
-              "/subscriptions/$SUB_ID/resourceGroups/guestbook-cicd-rg"
-   ```
-
-   Then create the service connection from the JSON output (`appId`, `password`,
-   `tenant`):
-
-   ```bash
-   az devops service-endpoint azurerm create --organization https://dev.azure.com/ayo2corra \
-     --project guestbook-monitoring --name guestbook-monitoring-azurerm \
-     --azure-rm-service-principal-id <appId> --azure-rm-subscription-id <subId> \
-     --azure-rm-subscription-name "<subscription name>" --azure-rm-tenant-id <tenant>
-   ```
-
-   (Also run `pulumi config set ciServicePrincipalObjectId <sp objectId>` and
-   `pulumi up` once, so `keyvault.ts` grants that identity Key Vault access too.)
-
-2. **The Azure Pipeline resource's GitHub trigger/webhook.** `az pipelines create`
+1. **The Azure Pipeline resource's GitHub trigger/webhook.** `az pipelines create`
    against a PAT-based GitHub service connection fails server-side with *"Could
    not create service hooks subscription. The repository does not reference a
    service connection"* - a known rough edge when the connection wasn't created
@@ -319,10 +299,10 @@ assumed):
    This also finishes wiring the GitHub webhook so pushes/PRs trigger runs
    automatically, which a script-created connection cannot reliably do.
 
-Until both of the above are done, the pipeline is **prepared but not yet
-executing in Azure DevOps**. Everything it would run has been run and verified
-locally (results below), but there is no Azure Pipelines run history to link to
-yet.
+Until that's done, the pipeline is **prepared and able to authenticate, but not
+yet executing in Azure DevOps**. Everything it would run has been run and
+verified locally (results below), but there is no Azure Pipelines run history to
+link to yet.
 
 ## Security findings
 
@@ -450,10 +430,10 @@ root causes and verification, not reconstructed after the fact.
 
 ## Known limitations, required permissions, and outstanding issues
 
-- Azure RM service connection and the Azure Pipeline's GitHub trigger are not
-  yet connected (see "Azure DevOps pipeline" above) - both require one manual,
-  human action each (an IAM role assignment, and a one-time OAuth consent
-  click), documented with exact steps.
+- The Azure Pipeline resource itself (and its GitHub trigger/webhook) is not yet
+  created - see "Azure DevOps pipeline" above. Requires one manual, one-time
+  OAuth consent click in the ADO portal; a scripted attempt fails server-side
+  with a known limitation of PAT-based GitHub connections.
 - No automated post-deploy smoke test exists yet (e.g., an automated
   `cmd=set`/`cmd=get` round-trip against the live guestbook). Incident 3 was
   only caught by manual testing. Recommended next step: add one as a
@@ -462,11 +442,13 @@ root causes and verification, not reconstructed after the fact.
 - `gcr.io/google-samples/gb-frontend:v5` carries known HIGH-severity CVEs in its
   Debian base image with no newer upstream tag available - accepted exception,
   not a false "clean" result (see "Security findings").
-- The `az ad sp create-for-rbac`/RBAC role-assignment commands in this README
-  require Owner/User Access Administrator-equivalent rights on the subscription
-  to run - whoever executes them needs that, separate from the rights needed to
-  run `pulumi up` itself (Contributor on the two resource groups is sufficient
-  for the latter).
+- The `guestbook-monitoring-ado` service principal (backing the Azure RM service
+  connection) was created directly by the repository owner, not scripted
+  end-to-end - `az ad sp create-for-rbac` plus an RBAC role assignment require
+  Owner/User Access Administrator-equivalent rights on the subscription, which
+  this environment's operating rules reserve for a human to grant. Running
+  `pulumi up` day-to-day only needs Contributor on the two resource groups,
+  already in place for both the deploying user and this service principal.
 - Both the Guestbook and Grafana LoadBalancers are public with no IP allowlist -
   acceptable for this review/demo context, not a production-appropriate
   configuration.
