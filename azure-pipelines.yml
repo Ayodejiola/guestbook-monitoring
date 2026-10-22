@@ -1,0 +1,330 @@
+# CI/CD + DevSecOps pipeline for the guestbook-monitoring Pulumi program.
+#
+# Status: the "validate" and "devsecops" stages run on every PR and push to
+# main. The "deploy" stage exists but requires a manually-approved Azure
+# DevOps Environment and has not yet been exercised - see README.md's
+# "Azure DevOps pipeline" section for exactly what is and isn't connected.
+#
+# Design choices, up front:
+# - pulumi up is never run automatically. Only `pulumi preview` runs in CI.
+#   Applying changes to the live cluster is a deliberate, approved,
+#   manually-triggered action (deploy stage below), consistent with this
+#   being a reviewed, cost-bearing cloud resource, not a throwaway sandbox.
+# - There is no Infrastructure-as-code static scan (Checkov/tfsec) stage.
+#   Those tools parse Terraform/CloudFormation/ARM/Helm-values YAML; this
+#   project's infrastructure is a Pulumi TypeScript program, which they do
+#   not parse. Equivalent coverage comes from `tsc --noEmit`, ESLint, and
+#   `pulumi preview` itself. Documented here rather than silently omitted.
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - README.md
+      - docs/**
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  NODE_VERSION: "20.x"
+  PULUMI_STACK: dev
+
+stages:
+  # ---------------------------------------------------------------------
+  - stage: Validate
+    displayName: "CI: build, lint, Pulumi/Helm validation"
+    jobs:
+      - job: BuildAndLint
+        displayName: "Build, lint, format check"
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 15
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: $(NODE_VERSION)
+            displayName: "Install Node.js"
+
+          - script: npm ci
+            displayName: "npm ci (locked install)"
+
+          - script: npm run build
+            displayName: "TypeScript build (tsc --noEmit)"
+
+          - script: npm run lint
+            displayName: "ESLint"
+
+          - script: npm run format:check
+            displayName: "Prettier format check"
+
+      - job: PulumiPreview
+        displayName: "Pulumi preview (no apply)"
+        dependsOn: BuildAndLint
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 20
+        variables:
+          - group: guestbook-monitoring-state
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: $(NODE_VERSION)
+            displayName: "Install Node.js"
+
+          - script: npm ci
+            displayName: "npm ci (locked install)"
+
+          - script: |
+              curl -fsSL https://get.pulumi.com | sh -s -- --version 3.271.0
+              echo "##vso[task.prependpath]$HOME/.pulumi/bin"
+            displayName: "Install Pulumi CLI"
+
+          - task: AzureCLI@2
+            displayName: "pulumi login + preview (against Azure Blob backend)"
+            inputs:
+              azureSubscription: "guestbook-monitoring-azurerm"
+              scriptType: bash
+              scriptLocation: inlineScript
+              # Pulumi's azure-native provider refuses to inherit an `az
+              # login --service-principal` session (it only accepts Azure
+              # CLI auth for an interactive user) - it wants the SPN as its
+              # own ARM_* env vars instead. addSpnToEnvironment exposes the
+              # service connection's SPN so we can remap it.
+              addSpnToEnvironment: true
+              inlineScript: |
+                set -eu
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_CLIENT_SECRET="$servicePrincipalKey"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                export AZURE_STORAGE_ACCOUNT="$(AZURE_STORAGE_ACCOUNT)"
+                export AZURE_STORAGE_KEY="$(AZURE_STORAGE_KEY)"
+                pulumi login "azblob://pulumi-state"
+                pulumi stack select "$(PULUMI_STACK)"
+                pulumi preview --diff
+
+      - job: HelmValidate
+        displayName: "Helm lint / template render"
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 10
+        steps:
+          - script: |
+              set -eu
+              helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+              helm repo update
+              # Mirrors the values monitoring.ts passes to the Release resource,
+              # so a bad values change is caught before `pulumi preview` even runs.
+              cat > /tmp/values.yaml <<'EOF'
+              grafana:
+                service:
+                  type: LoadBalancer
+                sidecar:
+                  dashboards:
+                    enabled: true
+                    searchNamespace: ALL
+                    label: grafana_dashboard
+              prometheus:
+                prometheusSpec:
+                  serviceMonitorSelectorNilUsesHelmValues: false
+                  serviceMonitorNamespaceSelector: {}
+                  podMonitorSelectorNilUsesHelmValues: false
+                  podMonitorNamespaceSelector: {}
+                  retention: 6h
+              alertmanager:
+                enabled: false
+              EOF
+              helm template kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+                --namespace monitoring -f /tmp/values.yaml > /tmp/rendered.yaml
+              echo "Rendered $(wc -l < /tmp/rendered.yaml) lines OK"
+            displayName: "helm template kube-prometheus-stack"
+
+  # ---------------------------------------------------------------------
+  - stage: DevSecOps
+    displayName: "DevSecOps: secrets, dependencies, containers, SBOM"
+    dependsOn: Validate
+    jobs:
+      - job: SecretScan
+        displayName: "Secret detection (gitleaks)"
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 10
+        steps:
+          - script: |
+              set -eu
+              curl -fsSL -o gitleaks.tar.gz \
+                https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz
+              tar -xzf gitleaks.tar.gz gitleaks
+              ./gitleaks detect --source . --redact --exit-code 1 \
+                --report-format sarif --report-path gitleaks-report.sarif
+            displayName: "gitleaks detect"
+          - task: PublishBuildArtifacts@1
+            condition: always()
+            inputs:
+              pathToPublish: gitleaks-report.sarif
+              artifactName: gitleaks-report
+
+      - job: DependencyScan
+        displayName: "Dependency vulnerability scan (npm audit)"
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 10
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: $(NODE_VERSION)
+          - script: npm ci
+            displayName: "npm ci (locked install)"
+          - script: |
+              npm audit --audit-level=high --json > npm-audit.json || true
+              npm audit --audit-level=high
+            displayName: "npm audit (fails on high/critical)"
+          - task: PublishBuildArtifacts@1
+            condition: always()
+            inputs:
+              pathToPublish: npm-audit.json
+              artifactName: npm-audit-report
+
+      - job: ContainerScan
+        displayName: "Container image scan (Trivy)"
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 20
+        steps:
+          - script: |
+              set -eu
+              # The upstream contrib/install.sh script failed on this agent
+              # with no usable error output (observed in Azure DevOps run
+              # #10: found the release, then exited 1) - the v0.56.2 tag it
+              # was pinned to turned out to no longer exist as a GitHub
+              # Release (verified via the releases API: only >=v0.69.2 and
+              # <=v0.26.0 are listed now). Download a confirmed-current
+              # pinned release binary directly instead - same method
+              # verified working for local scans in this project.
+              curl -fsSL -o /tmp/trivy.tar.gz \
+                https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz
+              sudo tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
+              trivy --version
+            displayName: "Install Trivy"
+          # redis and redis_exporter are images this project actively
+          # chooses/pins (see the redis_exporter CVE fix in git history) -
+          # a HIGH/CRITICAL finding here is a real, actionable regression,
+          # so this step hard-fails the build like any other step. It must
+          # stay clean.
+          - script: |
+              set -eu
+              echo "=== Scanning redis:7.2-alpine ==="
+              trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed redis:7.2-alpine
+              echo "=== Scanning oliver006/redis_exporter:v1.95.0-alpine ==="
+              trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed oliver006/redis_exporter:v1.95.0-alpine
+            displayName: "trivy image scan (redis, redis_exporter - must be clean)"
+
+          # gb-frontend:v5 is an unmaintained upstream Google example image
+          # with no newer tag published - these findings are a documented,
+          # accepted exception (see README "Security findings"), not
+          # something this project can fix by bumping a tag. This step is
+          # deliberately *informational*, not a gate: no --exit-code, no
+          # continueOnError (using continueOnError here would mark this
+          # job/stage/run "succeededWithIssues" on every single run
+          # forever, for a finding nobody can act on - that's noise, not
+          # signal, and it's exactly the kind of thing that trains people
+          # to stop looking at pipeline results). The real scan still runs
+          # for real against the real image, and its full, unredacted
+          # findings are published as a build artifact below, so nothing is
+          # hidden - it's just not what fails this build. If a newer
+          # gb-frontend tag is ever published upstream, this step should be
+          # merged back into the one above and start gating like it does.
+          - script: |
+              set -eu
+              echo "=== Scanning gcr.io/google-samples/gb-frontend:v5 (known accepted exception, informational) ==="
+              trivy image --severity HIGH,CRITICAL --ignore-unfixed gcr.io/google-samples/gb-frontend:v5 \
+                | tee gb-frontend-trivy-report.txt
+            displayName: "trivy image scan (gb-frontend - informational, documented exception)"
+          - task: PublishBuildArtifacts@1
+            condition: always()
+            inputs:
+              pathToPublish: gb-frontend-trivy-report.txt
+              artifactName: gb-frontend-trivy-report
+
+      - job: SBOM
+        displayName: "Generate SBOM (CycloneDX)"
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 10
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: $(NODE_VERSION)
+          - script: npm ci
+            displayName: "npm ci (locked install)"
+          - script: npx --yes @cyclonedx/cyclonedx-npm@1 --output-file sbom.cdx.json
+            displayName: "Generate CycloneDX SBOM"
+          - task: PublishBuildArtifacts@1
+            condition: always()
+            inputs:
+              pathToPublish: sbom.cdx.json
+              artifactName: sbom
+
+  # ---------------------------------------------------------------------
+  - stage: Deploy
+    displayName: "Deploy (manual approval required)"
+    dependsOn:
+      - Validate
+      - DevSecOps
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: PulumiUp
+        displayName: "pulumi up (dev environment)"
+        pool:
+          vmImage: ubuntu-latest
+        # The "guestbook-dev" Environment must exist in Azure DevOps with an
+        # approval check configured, so this job pauses for a human
+        # approval before it runs - it does not deploy on its own.
+        environment: guestbook-dev
+        variables:
+          - group: guestbook-monitoring-state
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: NodeTool@0
+                  inputs:
+                    versionSpec: $(NODE_VERSION)
+                - script: npm ci
+                  displayName: "npm ci (locked install)"
+                - script: |
+                    curl -fsSL https://get.pulumi.com | sh -s -- --version 3.271.0
+                    echo "##vso[task.prependpath]$HOME/.pulumi/bin"
+                  displayName: "Install Pulumi CLI"
+                - task: AzureCLI@2
+                  displayName: "pulumi up"
+                  inputs:
+                    azureSubscription: "guestbook-monitoring-azurerm"
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    # See the matching comment in the Validate stage's
+                    # PulumiPreview job - azure-native needs its own ARM_*
+                    # env vars, not an inherited `az login` SP session.
+                    addSpnToEnvironment: true
+                    inlineScript: |
+                      set -eu
+                      export ARM_CLIENT_ID="$servicePrincipalId"
+                      export ARM_CLIENT_SECRET="$servicePrincipalKey"
+                      export ARM_TENANT_ID="$tenantId"
+                      export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                      export AZURE_STORAGE_ACCOUNT="$(AZURE_STORAGE_ACCOUNT)"
+                      export AZURE_STORAGE_KEY="$(AZURE_STORAGE_KEY)"
+                      pulumi login "azblob://pulumi-state"
+                      pulumi stack select "$(PULUMI_STACK)"
+                      pulumi up --yes --skip-preview
+                - script: |
+                    set -eu
+                    echo "Release: $(Build.BuildId) / commit $(Build.SourceVersion)"
+                    pulumi stack output guestbookUrl
+                    pulumi stack output grafanaUrl
+                  displayName: "Record release outputs"

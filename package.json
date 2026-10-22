@@ -1,15 +1,23 @@
 {
-  "name": "guestbook-monitoring",
-  "main": "index.ts",
-  "devDependencies": {
-    "@types/node": "^20.0.0",
-    "typescript": "^5.4.0"
-  },
-  "dependencies": {
-    "@pulumi/azure-native": "^2.52.0",
-    "@pulumi/kubernetes": "^4.17.1",
-    "@pulumi/pulumi": "^3.128.0",
-    "@pulumi/random": "^4.16.5",
-    "@pulumi/tls": "^5.0.4"
-  }
+    "name": "guestbook-monitoring",
+    "main": "index.ts",
+    "scripts": {
+        "build": "tsc --noEmit -p tsconfig.json",
+        "lint": "eslint . --ext .ts",
+        "format:check": "prettier --check \"*.ts\""
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "eslint": "^9.14.0",
+        "prettier": "^3.3.3",
+        "typescript": "^5.4.0",
+        "typescript-eslint": "^8.13.0"
+    },
+    "dependencies": {
+        "@pulumi/azure-native": "^2.52.0",
+        "@pulumi/kubernetes": "^4.17.1",
+        "@pulumi/pulumi": "^3.128.0",
+        "@pulumi/random": "^4.16.5",
+        "@pulumi/tls": "^5.0.4"
+    }
 }

@@ -17,13 +17,21 @@ const k8sProvider = new k8s.Provider("aks-k8s", {
     kubeconfig,
 });
 
-const guestbookNamespace = new k8s.core.v1.Namespace("guestbook", {
-    metadata: { name: "guestbook" },
-}, { provider: k8sProvider });
+const guestbookNamespace = new k8s.core.v1.Namespace(
+    "guestbook",
+    {
+        metadata: { name: "guestbook" },
+    },
+    { provider: k8sProvider },
+);
 
-const monitoringNamespace = new k8s.core.v1.Namespace("monitoring", {
-    metadata: { name: "monitoring" },
-}, { provider: k8sProvider });
+const monitoringNamespace = new k8s.core.v1.Namespace(
+    "monitoring",
+    {
+        metadata: { name: "monitoring" },
+    },
+    { provider: k8sProvider },
+);
 
 const guestbook = createGuestbook({
     provider: k8sProvider,
@@ -46,7 +54,7 @@ const grafanaPasswordSecret = storeSecret(
 );
 
 function loadBalancerAddress(svc: k8s.core.v1.Service): pulumi.Output<string> {
-    return svc.status.apply(status => {
+    return svc.status.apply((status) => {
         const ingress = status?.loadBalancer?.ingress?.[0];
         return ingress?.ip ?? ingress?.hostname ?? "pending";
     });
