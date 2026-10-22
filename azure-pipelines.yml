@@ -211,20 +211,33 @@ stages:
               sudo tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
               trivy --version
             displayName: "Install Trivy"
+          # redis and redis_exporter are images this project actively
+          # chooses/pins (see the redis_exporter CVE fix in git history) -
+          # a HIGH/CRITICAL finding here is a real, actionable regression,
+          # so this step hard-fails the build like any other step. It must
+          # stay clean.
           - script: |
               set -eu
-              images="gcr.io/google-samples/gb-frontend:v5 redis:7.2-alpine oliver006/redis_exporter:v1.95.0-alpine"
-              status=0
-              for img in $images; do
-                echo "=== Scanning $img ==="
-                trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed "$img" || status=1
-              done
-              # gb-frontend:v5 is an unmaintained upstream demo image (no
-              # patched tag exists from Google). If it is the only failure,
-              # that's a documented, accepted exception - see README
-              # "Security findings" - not a silent pass.
-              exit $status
-            displayName: "trivy image scan (app images)"
+              echo "=== Scanning redis:7.2-alpine ==="
+              trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed redis:7.2-alpine
+              echo "=== Scanning oliver006/redis_exporter:v1.95.0-alpine ==="
+              trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed oliver006/redis_exporter:v1.95.0-alpine
+            displayName: "trivy image scan (redis, redis_exporter - must be clean)"
+
+          # gb-frontend:v5 is an unmaintained upstream Google example image
+          # with no newer tag published - these findings are a documented,
+          # accepted exception (see README "Security findings"), not
+          # something this project can fix by bumping a tag. Reported, not
+          # hidden: this step still runs Trivy for real and the full
+          # findings are in this step's log - it just doesn't block the
+          # build on a CVE nobody can patch. If a newer gb-frontend tag
+          # ever exists, this step should be merged back into the one
+          # above.
+          - script: |
+              set -eu
+              echo "=== Scanning gcr.io/google-samples/gb-frontend:v5 (known accepted exception) ==="
+              trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed gcr.io/google-samples/gb-frontend:v5
+            displayName: "trivy image scan (gb-frontend - known exception, reported not blocking)"
             continueOnError: true
 
       - job: SBOM
