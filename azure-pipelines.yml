@@ -198,8 +198,18 @@ stages:
         steps:
           - script: |
               set -eu
-              curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-                | sh -s -- -b /usr/local/bin v0.56.2
+              # The upstream contrib/install.sh script failed on this agent
+              # with no usable error output (observed in Azure DevOps run
+              # #10: found the release, then exited 1) - the v0.56.2 tag it
+              # was pinned to turned out to no longer exist as a GitHub
+              # Release (verified via the releases API: only >=v0.69.2 and
+              # <=v0.26.0 are listed now). Download a confirmed-current
+              # pinned release binary directly instead - same method
+              # verified working for local scans in this project.
+              curl -fsSL -o /tmp/trivy.tar.gz \
+                https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz
+              sudo tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
+              trivy --version
             displayName: "Install Trivy"
           - script: |
               set -eu
