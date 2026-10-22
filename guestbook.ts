@@ -57,8 +57,12 @@ export function createGuestbook(args: GuestbookArgs): GuestbookResult {
         },
     }, resourceOpts);
 
+    // gb-frontend:v5 has its Redis hostnames hardcoded - it does a DNS
+    // lookup for Services literally named "redis-leader" and
+    // "redis-follower", so these two app-facing Services need a pinned
+    // `metadata.name` rather than Pulumi's default autonamed suffix.
     const redisLeaderService = new k8s.core.v1.Service("redis-leader", {
-        metadata: { namespace: nsName, labels: redisLeaderLabels },
+        metadata: { name: "redis-leader", namespace: nsName, labels: redisLeaderLabels },
         spec: {
             selector: redisLeaderLabels,
             ports: [{ port: 6379, targetPort: 6379 }],
@@ -108,7 +112,10 @@ export function createGuestbook(args: GuestbookArgs): GuestbookResult {
     }, { ...resourceOpts, dependsOn: [redisLeaderService] });
 
     const redisReplicaService = new k8s.core.v1.Service("redis-replica", {
-        metadata: { namespace: nsName, labels: redisReplicaLabels },
+        // The app looks this up as "redis-follower" (older terminology than
+        // the "leader/replica" naming used elsewhere in this file for the
+        // Pulumi resources/labels - the image predates the rename).
+        metadata: { name: "redis-follower", namespace: nsName, labels: redisReplicaLabels },
         spec: {
             selector: redisReplicaLabels,
             ports: [{ port: 6379, targetPort: 6379 }],
