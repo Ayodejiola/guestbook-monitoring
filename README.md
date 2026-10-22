@@ -43,12 +43,61 @@ of the stack differently, on purpose:
 - `kubectl` and `helm` (helm isn't strictly required to deploy - Pulumi's Helm provider
   handles that - but it's useful for troubleshooting)
 
-## Deploy
+## State backend and secrets
+
+Pulumi state lives in **Azure Blob Storage**, not the local filesystem, so both a
+human running `pulumi up` from their laptop and an Azure Pipelines agent see the
+same state. Stack secrets (currently just the Grafana admin password at the
+Pulumi-state level - the actual value lives in Key Vault, see below) are encrypted
+with an **Azure Key Vault key** via envelope encryption, not a shared passphrase.
+
+This was deliberately bootstrapped *outside* Pulumi, with plain `az` CLI commands,
+to sidestep the chicken-and-egg problem of using Pulumi to create the bucket Pulumi
+itself needs in order to run:
 
 ```bash
+az group create --name guestbook-cicd-rg --location eastus
+az storage account create --name <globally-unique-name> --resource-group guestbook-cicd-rg \
+  --location eastus --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 \
+  --allow-blob-public-access false
+az storage container create --name pulumi-state --account-name <name> --auth-mode login
+```
+
+Then, once logged into that backend (`pulumi login azblob://pulumi-state` with
+`AZURE_STORAGE_ACCOUNT`/`AZURE_STORAGE_KEY` set - the key comes from
+`az storage account keys list`, never committed anywhere), the stack's secrets
+provider was switched from a local passphrase to the Key Vault key created in
+`keyvault.ts`:
+
+```bash
+az keyvault key create --vault-name <vault> --name pulumi-secrets --protection software --kty RSA --size 2048
+pulumi stack change-secrets-provider "azurekeyvault://<vault>.vault.azure.net/keys/pulumi-secrets"
+```
+
+Anyone running `pulumi` commands against this stack (including CI) needs:
+1. `AZURE_STORAGE_ACCOUNT` + `AZURE_STORAGE_KEY` env vars (or RBAC `Storage Blob
+   Data Contributor` on the storage account, as an alternative to a shared key)
+   to read/write state.
+2. Azure AD access to the Key Vault key's `encrypt`/`decrypt`/`wrapKey`/`unwrapKey`
+   permissions (granted via that vault's access policy in `keyvault.ts` - see the
+   `ciServicePrincipalObjectId` config value for granting a CI identity access) to
+   decrypt secrets.
+3. Normal Azure RBAC to actually create/read the deployed resources.
+
+## Deploy
+
+Every `pulumi` command below needs `AZURE_STORAGE_ACCOUNT`/`AZURE_STORAGE_KEY` set
+in that shell (fetch the key once per session with `az storage account keys list`
+and export both - Pulumi doesn't persist them for you):
+
+```bash
+export AZURE_STORAGE_ACCOUNT=<your storage account name>
+export AZURE_STORAGE_KEY=$(az storage account keys list --account-name "$AZURE_STORAGE_ACCOUNT" \
+  --resource-group guestbook-cicd-rg --query "[0].value" -o tsv)
+
 npm install
-pulumi login --local          # or omit to use Pulumi Cloud, your choice
-pulumi stack init dev
+pulumi login "azblob://pulumi-state"
+pulumi stack select dev                # or: pulumi stack init dev, for a brand-new stack
 pulumi config set azure-native:location eastus   # or your preferred region
 pulumi up
 ```

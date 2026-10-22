@@ -9,6 +9,12 @@ import * as resources from "@pulumi/azure-native/resources";
 
 export interface SecretsVaultArgs {
     resourceGroup: resources.ResourceGroup;
+    // The Azure DevOps service connection's service principal objectId, once
+    // it exists (`pulumi config set ciServicePrincipalObjectId <objectId>`).
+    // Granted the same secrets+keys access as the deploying user, scoped to
+    // just this vault, so the pipeline can decrypt stack secrets and read
+    // the Grafana password without broader subscription access.
+    ciServicePrincipalObjectId?: string;
 }
 
 export interface SecretsVaultResult {
@@ -16,8 +22,23 @@ export interface SecretsVaultResult {
 }
 
 export function createSecretsVault(args: SecretsVaultArgs): SecretsVaultResult {
-    const { resourceGroup } = args;
+    const { resourceGroup, ciServicePrincipalObjectId } = args;
     const current = authorization.getClientConfigOutput({});
+
+    // "keys" permissions back the azurekeyvault:// Pulumi secrets provider
+    // (envelope encryption via wrap/unwrap), used instead of a shared
+    // PULUMI_CONFIG_PASSPHRASE.
+    const permissions = {
+        secrets: ["Get", "List", "Set", "Delete"],
+        keys: ["Get", "Create", "List", "WrapKey", "UnwrapKey", "Encrypt", "Decrypt"],
+    };
+
+    const accessPolicies = [
+        { tenantId: current.tenantId, objectId: current.objectId, permissions },
+        ...(ciServicePrincipalObjectId
+            ? [{ tenantId: current.tenantId, objectId: ciServicePrincipalObjectId, permissions }]
+            : []),
+    ];
 
     const vault = new keyvault.Vault("guestbook-kv", {
         resourceGroupName: resourceGroup.name,
@@ -26,15 +47,7 @@ export function createSecretsVault(args: SecretsVaultArgs): SecretsVaultResult {
             sku: { family: keyvault.SkuFamily.A, name: keyvault.SkuName.Standard },
             tenantId: current.tenantId,
             enableRbacAuthorization: false,
-            accessPolicies: [
-                {
-                    tenantId: current.tenantId,
-                    objectId: current.objectId,
-                    permissions: {
-                        secrets: ["Get", "List", "Set", "Delete"],
-                    },
-                },
-            ],
+            accessPolicies,
         },
     });
 
