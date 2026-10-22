@@ -12,6 +12,10 @@ const config = new pulumi.Config();
 // `pulumi preview`/`pulumi up` against this stack's Key Vault-backed secrets
 // provider and read the Grafana secret, without broadening access further.
 const ciServicePrincipalObjectId = config.get("ciServicePrincipalObjectId");
+// The human owner's fixed objectId - see the long comment in keyvault.ts
+// for why this must be pinned explicitly rather than derived from whoever
+// happens to be running `pulumi up`.
+const ownerObjectId = config.get("ownerObjectId");
 
 const k8sProvider = new k8s.Provider("aks-k8s", {
     kubeconfig,
@@ -45,7 +49,11 @@ const monitoring = createMonitoring({
     guestbook,
 });
 
-const secretsVault = createSecretsVault({ resourceGroup, ciServicePrincipalObjectId });
+const secretsVault = createSecretsVault({
+    resourceGroup,
+    ciServicePrincipalObjectId,
+    ownerObjectId,
+});
 const grafanaPasswordSecret = storeSecret(
     "grafana-admin-password",
     secretsVault.vault,

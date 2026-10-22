@@ -15,6 +15,21 @@ export interface SecretsVaultArgs {
     // just this vault, so the pipeline can decrypt stack secrets and read
     // the Grafana password without broader subscription access.
     ciServicePrincipalObjectId?: string;
+    // The human owner's objectId (`pulumi config set ownerObjectId <objectId>`).
+    //
+    // Deliberately NOT derived from authorization.getClientConfigOutput()'s
+    // current.objectId, which resolves to "whoever is running this Pulumi
+    // program right now" - a human locally, or the CI service principal in
+    // Azure DevOps. Using that dynamic value here caused a real incident:
+    // when the CI service principal ran `pulumi up`, current.objectId
+    // resolved to the CI SP's own id (identical to
+    // ciServicePrincipalObjectId), so the declared access-policy array
+    // collapsed to a single entry and Pulumi correctly removed the human
+    // owner's policy as "no longer declared" - locking the owner out of
+    // decrypting this very stack's secrets. Pinning both identities as
+    // fixed config values makes the vault's access policy stable
+    // regardless of who happens to run `pulumi up` last.
+    ownerObjectId?: string;
 }
 
 export interface SecretsVaultResult {
@@ -22,7 +37,7 @@ export interface SecretsVaultResult {
 }
 
 export function createSecretsVault(args: SecretsVaultArgs): SecretsVaultResult {
-    const { resourceGroup, ciServicePrincipalObjectId } = args;
+    const { resourceGroup, ciServicePrincipalObjectId, ownerObjectId } = args;
     const current = authorization.getClientConfigOutput({});
 
     // "keys" permissions back the azurekeyvault:// Pulumi secrets provider
@@ -33,8 +48,18 @@ export function createSecretsVault(args: SecretsVaultArgs): SecretsVaultResult {
         keys: ["Get", "Create", "List", "WrapKey", "UnwrapKey", "Encrypt", "Decrypt"],
     };
 
+    // Fall back to current.objectId only so a brand-new stack's very first
+    // `pulumi up` (before ownerObjectId has ever been set) doesn't lock its
+    // own creator out. Set ownerObjectId explicitly immediately after that
+    // first apply - see README.
+    const ownerPolicy = {
+        tenantId: current.tenantId,
+        objectId: ownerObjectId ?? current.objectId,
+        permissions,
+    };
+
     const accessPolicies = [
-        { tenantId: current.tenantId, objectId: current.objectId, permissions },
+        ownerPolicy,
         ...(ciServicePrincipalObjectId
             ? [{ tenantId: current.tenantId, objectId: ciServicePrincipalObjectId, permissions }]
             : []),
