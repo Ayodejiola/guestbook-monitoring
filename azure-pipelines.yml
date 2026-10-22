@@ -292,6 +292,15 @@ stages:
           runOnce:
             deploy:
               steps:
+                # Unlike a regular `job:`, a `deployment:` job does NOT
+                # check out the source repo by default - without this,
+                # npm ci has no package-lock.json to install from at all
+                # (confirmed live: Azure DevOps run #18 failed here with
+                # "npm ci can only install with an existing
+                # package-lock.json", because the working directory was
+                # genuinely empty of repo source - only the implicit
+                # Download Artifact no-op steps had run).
+                - checkout: self
                 - task: NodeTool@0
                   inputs:
                     versionSpec: $(NODE_VERSION)
