@@ -311,7 +311,7 @@ stages:
                     echo "##vso[task.prependpath]$HOME/.pulumi/bin"
                   displayName: "Install Pulumi CLI"
                 - task: AzureCLI@2
-                  displayName: "pulumi up"
+                  displayName: "pulumi up + record release outputs"
                   inputs:
                     azureSubscription: "guestbook-monitoring-azurerm"
                     scriptType: bash
@@ -331,9 +331,14 @@ stages:
                       pulumi login "azblob://pulumi-state"
                       pulumi stack select "$(PULUMI_STACK)"
                       pulumi up --yes --skip-preview
-                - script: |
-                    set -eu
-                    echo "Release: $(Build.BuildId) / commit $(Build.SourceVersion)"
-                    pulumi stack output guestbookUrl
-                    pulumi stack output grafanaUrl
-                  displayName: "Record release outputs"
+                      # Reporting the release outputs here, in the same
+                      # AzureCLI@2 task as `pulumi up`, rather than as its
+                      # own step - a separate `script:` step does not
+                      # inherit this step's az login session or exported
+                      # env vars (confirmed live: Azure DevOps runs #20/#21
+                      # failed here with "DefaultAzureCredential: failed to
+                      # acquire a token", because the credentials this step
+                      # sets up simply don't exist in a sibling step).
+                      echo "Release: $(Build.BuildId) / commit $(Build.SourceVersion)"
+                      pulumi stack output guestbookUrl
+                      pulumi stack output grafanaUrl
