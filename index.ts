@@ -5,6 +5,14 @@ import { createGuestbook } from "./guestbook";
 import { createMonitoring } from "./monitoring";
 import { createSecretsVault, storeSecret } from "./keyvault";
 
+const config = new pulumi.Config();
+// Set once the Azure DevOps service connection's service principal exists:
+//   pulumi config set ciServicePrincipalObjectId <objectId>
+// Grants that identity "get" on vault secrets/keys so the pipeline can run
+// `pulumi preview`/`pulumi up` against this stack's Key Vault-backed secrets
+// provider and read the Grafana secret, without broadening access further.
+const ciServicePrincipalObjectId = config.get("ciServicePrincipalObjectId");
+
 const k8sProvider = new k8s.Provider("aks-k8s", {
     kubeconfig,
 });
@@ -29,7 +37,7 @@ const monitoring = createMonitoring({
     guestbook,
 });
 
-const secretsVault = createSecretsVault({ resourceGroup });
+const secretsVault = createSecretsVault({ resourceGroup, ciServicePrincipalObjectId });
 const grafanaPasswordSecret = storeSecret(
     "grafana-admin-password",
     secretsVault.vault,

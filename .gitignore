@@ -4,3 +4,11 @@ bin/
 .pulumi/
 Pulumi.*.yaml.bak
 kubeconfig.yaml
+
+# Defense in depth: these should never exist inside the repo directory in
+# the first place (see README's bootstrap/state-backup notes), but ignore
+# them regardless so a slip never becomes a commit.
+.bootstrap-vars
+*-state-backup.json
+*.pem
+*.key
