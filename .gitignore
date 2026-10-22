@@ -1,0 +1,6 @@
+node_modules/
+bin/
+*.tsbuildinfo
+.pulumi/
+Pulumi.*.yaml.bak
+kubeconfig.yaml

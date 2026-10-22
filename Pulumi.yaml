@@ -1,0 +1,3 @@
+name: guestbook-monitoring
+runtime: nodejs
+description: Pulumi Kubernetes Guestbook example extended with Prometheus + Grafana monitoring, deployed on a Pulumi-provisioned AKS cluster.

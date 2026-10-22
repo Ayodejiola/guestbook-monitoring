@@ -1,0 +1,5 @@
+encryptionsalt: v1:+5VGjU2TAJU=:v1:owD0f/CnHInwRCpa:pTtbK5P8tUEzR36E1WDYb0gYrBUpRg==
+config:
+  azure-native:location: eastus
+  guestbook-monitoring:nodeCount: "2"
+  guestbook-monitoring:nodeVmSize: Standard_B2s
