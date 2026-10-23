@@ -156,7 +156,7 @@ own, so its resource usage is scraped via the kubelet/cAdvisor job every pod
 gets automatically. Full verification walkthrough, including the Grafana
 dashboard, is in [Verification](#verification).
 
-## Table of Contents
+## Table of Contents(Advanced-Optional)
 
 - [Quick Start](#quick-start)
 - [Overview](#overview)
