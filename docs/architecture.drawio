@@ -1,0 +1,241 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="guestbook-architecture" name="Azure Architecture">
+    <mxGraphModel dx="2200" dy="1300" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1250" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ================= External actors / CI-CD (outside Azure) ================= -->
+        <mxCell id="dev" value="Developer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="20" y="40" width="120" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="github" value="GitHub&#10;Ayodejiola/guestbook-monitoring&#10;(main, feature/*, fix/*, ci/*, docs/*)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#24292f;strokeColor=#000000;fontColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="200" y="30" width="220" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ado" value="Azure DevOps&#10;org: ayo2corra  /  project: guestbook-monitoring&#10;Pipeline: Validate -&gt; DevSecOps -&gt; Deploy&#10;(Deploy gated behind Environment approval)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0078D4;strokeColor=#004578;fontColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="480" y="20" width="320" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="internet" value="Internet" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="900" y="40" width="120" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-dev-github" style="endArrow=classic;html=1;" edge="1" parent="1" source="dev" target="github">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-dev-github-lbl" value="git push" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-dev-github">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-github-ado" style="endArrow=classic;html=1;" edge="1" parent="1" source="github" target="ado">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-github-ado-lbl" value="webhook trigger&#10;(push / PR)" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-github-ado">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- ================= Azure Subscription boundary ================= -->
+        <mxCell id="subscription" value="Azure Subscription — MSDN Platforms Subscription (4aa1083f-7491-42aa-b0e6-32d54bc43d80)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#000000;dashed=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;fontStyle=1;container=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="20" y="160" width="1800" height="1000" as="geometry" />
+        </mxCell>
+
+        <!-- Resource Group: guestbook-rgf48916b4 -->
+        <mxCell id="rg1" value="Resource Group: guestbook-rgf48916b4 (eastus)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#0078D4;dashed=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;container=1;collapsible=0;" vertex="1" parent="subscription">
+          <mxGeometry x="40" y="60" width="380" height="220" as="geometry" />
+        </mxCell>
+
+        <mxCell id="aks" value="AKS&#10;guestbook-aksbcbd201e&#10;Kubernetes 1.36" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#0078D4;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;shape=mxgraph.azure2.kubernetes_services;" vertex="1" parent="rg1">
+          <mxGeometry x="40" y="60" width="64" height="64" as="geometry" />
+        </mxCell>
+
+        <mxCell id="kv" value="Key Vault&#10;guestbook-kv3f27af8e&#10;(Grafana password +&#10;Pulumi secrets key)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#0078D4;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;shape=mxgraph.azure2.key_vaults;" vertex="1" parent="rg1">
+          <mxGeometry x="230" y="60" width="64" height="64" as="geometry" />
+        </mxCell>
+
+        <!-- Resource Group: guestbook-cicd-rg -->
+        <mxCell id="rg3" value="Resource Group: guestbook-cicd-rg (eastus)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#0078D4;dashed=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;container=1;collapsible=0;" vertex="1" parent="subscription">
+          <mxGeometry x="40" y="320" width="380" height="180" as="geometry" />
+        </mxCell>
+
+        <mxCell id="storage" value="Storage Account&#10;guestbookpulumi85351&#10;container: pulumi-state&#10;(Pulumi azblob:// backend)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#0078D4;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;shape=mxgraph.azure2.storage_accounts;" vertex="1" parent="rg3">
+          <mxGeometry x="40" y="60" width="64" height="64" as="geometry" />
+        </mxCell>
+
+        <!-- Resource Group: AKS-managed node RG -->
+        <mxCell id="rg2" value="Resource Group (AKS-managed): MC_guestbook-rgf48916b4_guestbook-aksbcbd201e_eastus" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#0078D4;dashed=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;container=1;collapsible=0;" vertex="1" parent="subscription">
+          <mxGeometry x="460" y="60" width="1300" height="900" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lb" value="Load Balancer&#10;&quot;kubernetes&quot; (Standard SKU)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#0078D4;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;shape=mxgraph.azure2.load_balancers;" vertex="1" parent="rg2">
+          <mxGeometry x="1160" y="60" width="64" height="64" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pip1" value="Public IP&#10;74.151.141.67&#10;(guestbook frontend)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#0078D4;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;shape=mxgraph.azure2.public_ip_addresses;" vertex="1" parent="rg2">
+          <mxGeometry x="1160" y="200" width="64" height="64" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pip2" value="Public IP&#10;20.72.180.150&#10;(Grafana)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#0078D4;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;shape=mxgraph.azure2.public_ip_addresses;" vertex="1" parent="rg2">
+          <mxGeometry x="1160" y="340" width="64" height="64" as="geometry" />
+        </mxCell>
+
+        <!-- VNet container -->
+        <mxCell id="vnet" value="Virtual Network: aks-vnet-25283147 (10.224.0.0/12)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#0078D4;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;container=1;collapsible=0;" vertex="1" parent="rg2">
+          <mxGeometry x="40" y="60" width="1080" height="780" as="geometry" />
+        </mxCell>
+
+        <!-- Subnet container (security boundary: NSG attached) -->
+        <mxCell id="subnet" value="Subnet: aks-subnet (10.224.0.0/16)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078D4;dashed=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;container=1;collapsible=0;" vertex="1" parent="vnet">
+          <mxGeometry x="30" y="50" width="1020" height="680" as="geometry" />
+        </mxCell>
+
+        <mxCell id="nsg" value="NSG&#10;aks-agentpool-25283147-nsg" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#0078D4;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;shape=mxgraph.azure2.network_security_groups;" vertex="1" parent="subnet">
+          <mxGeometry x="20" y="20" width="64" height="64" as="geometry" />
+        </mxCell>
+
+        <mxCell id="vmss" value="VM Scale Set (x2, Standard_B2s)&#10;aks-agentpool-24962554-vmss" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#0078D4;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;shape=mxgraph.azure2.virtual_machine;" vertex="1" parent="subnet">
+          <mxGeometry x="160" y="20" width="64" height="64" as="geometry" />
+        </mxCell>
+
+        <!-- Kubernetes namespace: guestbook -->
+        <mxCell id="ns-guestbook" value="Namespace: guestbook" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;container=1;collapsible=0;" vertex="1" parent="subnet">
+          <mxGeometry x="20" y="120" width="470" height="430" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pod-frontend" value="Pods: frontend x3&#10;(gb-frontend:v5)" style="sketch=0;html=1;dashed=0;fillColor=#326CE5;strokeColor=#ffffff;verticalLabelPosition=bottom;align=center;verticalAlign=top;shape=mxgraph.kubernetes.icon;prIcon=pod;" vertex="1" parent="ns-guestbook">
+          <mxGeometry x="30" y="40" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="svc-frontend" value="Service: frontend-cad08854&#10;(LoadBalancer :80)" style="sketch=0;html=1;dashed=0;fillColor=#326CE5;strokeColor=#ffffff;verticalLabelPosition=bottom;align=center;verticalAlign=top;shape=mxgraph.kubernetes.icon;prIcon=svc;" vertex="1" parent="ns-guestbook">
+          <mxGeometry x="140" y="40" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pod-redis-leader" value="Pod: redis-leader&#10;+ redis_exporter sidecar&#10;(:9121)" style="sketch=0;html=1;dashed=0;fillColor=#326CE5;strokeColor=#ffffff;verticalLabelPosition=bottom;align=center;verticalAlign=top;shape=mxgraph.kubernetes.icon;prIcon=pod;" vertex="1" parent="ns-guestbook">
+          <mxGeometry x="30" y="190" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pod-redis-replica" value="Pods: redis-replica x2&#10;+ redis_exporter sidecars&#10;(:9121)" style="sketch=0;html=1;dashed=0;fillColor=#326CE5;strokeColor=#ffffff;verticalLabelPosition=bottom;align=center;verticalAlign=top;shape=mxgraph.kubernetes.icon;prIcon=pod;" vertex="1" parent="ns-guestbook">
+          <mxGeometry x="220" y="190" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- Kubernetes namespace: monitoring -->
+        <mxCell id="ns-monitoring" value="Namespace: monitoring" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;container=1;collapsible=0;" vertex="1" parent="subnet">
+          <mxGeometry x="520" y="120" width="470" height="430" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pod-prometheus" value="Pod: Prometheus&#10;(kube-prometheus-stack)" style="sketch=0;html=1;dashed=0;fillColor=#326CE5;strokeColor=#ffffff;verticalLabelPosition=bottom;align=center;verticalAlign=top;shape=mxgraph.kubernetes.icon;prIcon=pod;" vertex="1" parent="ns-monitoring">
+          <mxGeometry x="30" y="40" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pod-grafana" value="Pod: Grafana" style="sketch=0;html=1;dashed=0;fillColor=#326CE5;strokeColor=#ffffff;verticalLabelPosition=bottom;align=center;verticalAlign=top;shape=mxgraph.kubernetes.icon;prIcon=pod;" vertex="1" parent="ns-monitoring">
+          <mxGeometry x="140" y="40" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="svc-grafana" value="Service: grafana&#10;(LoadBalancer :80)" style="sketch=0;html=1;dashed=0;fillColor=#326CE5;strokeColor=#ffffff;verticalLabelPosition=bottom;align=center;verticalAlign=top;shape=mxgraph.kubernetes.icon;prIcon=svc;" vertex="1" parent="ns-monitoring">
+          <mxGeometry x="250" y="40" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <!-- ================= Edges within Azure ================= -->
+        <mxCell id="e-ado-aks" style="endArrow=classic;html=1;dashed=1;strokeColor=#0078D4;" edge="1" parent="1" source="ado" target="aks">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-ado-aks-lbl" value="pulumi up&#10;(Service Principal auth&#10;via Azure RM service connection)" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-ado-aks">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-ado-kv" style="endArrow=classic;html=1;dashed=1;strokeColor=#0078D4;" edge="1" parent="1" source="ado" target="kv">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-ado-kv-lbl" value="decrypt stack secrets&#10;(pinned access policy)" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-ado-kv">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-ado-storage" style="endArrow=classic;html=1;dashed=1;strokeColor=#0078D4;" edge="1" parent="1" source="ado" target="storage">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-ado-storage-lbl" value="pulumi state&#10;(azblob://pulumi-state)" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-ado-storage">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-internet-pip1" style="endArrow=classic;html=1;" edge="1" parent="1" source="internet" target="pip1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-internet-pip1-lbl" value="HTTP :80" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-internet-pip1">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-internet-pip2" style="endArrow=classic;html=1;" edge="1" parent="1" source="internet" target="pip2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-internet-pip2-lbl" value="HTTP :80" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-internet-pip2">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-pip1-lb" style="endArrow=classic;html=1;" edge="1" parent="1" source="pip1" target="lb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-pip2-lb" style="endArrow=classic;html=1;" edge="1" parent="1" source="pip2" target="lb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-lb-svcfrontend" style="endArrow=classic;html=1;" edge="1" parent="1" source="lb" target="svc-frontend">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-lb-svcgrafana" style="endArrow=classic;html=1;" edge="1" parent="1" source="lb" target="svc-grafana">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-svcfrontend-podfrontend" style="endArrow=classic;html=1;" edge="1" parent="1" source="svc-frontend" target="pod-frontend">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-svcgrafana-podgrafana" style="endArrow=classic;html=1;" edge="1" parent="1" source="svc-grafana" target="pod-grafana">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-frontend-leader" style="endArrow=classic;html=1;" edge="1" parent="1" source="pod-frontend" target="pod-redis-leader">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-frontend-leader-lbl" value="TCP 6379 (write)" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-frontend-leader">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-frontend-replica" style="endArrow=classic;html=1;" edge="1" parent="1" source="pod-frontend" target="pod-redis-replica">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-frontend-replica-lbl" value="TCP 6379 (read)" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-frontend-replica">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-prom-leader" style="endArrow=classic;html=1;dashed=1;strokeColor=#d79b00;" edge="1" parent="1" source="pod-prometheus" target="pod-redis-leader">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-prom-leader-lbl" value="scrape :9121&#10;(ServiceMonitor)" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-prom-leader">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-prom-replica" style="endArrow=classic;html=1;dashed=1;strokeColor=#d79b00;" edge="1" parent="1" source="pod-prometheus" target="pod-redis-replica">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-prom-replica-lbl" value="scrape :9121&#10;(ServiceMonitor)" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-prom-replica">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-prom-frontend" style="endArrow=classic;html=1;dashed=1;strokeColor=#d79b00;" edge="1" parent="1" source="pod-prometheus" target="pod-frontend">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-prom-frontend-lbl" value="scrape&#10;(kubelet / cAdvisor)" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-prom-frontend">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-grafana-prom" style="endArrow=classic;html=1;dashed=1;strokeColor=#d79b00;" edge="1" parent="1" source="pod-grafana" target="pod-prometheus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e-grafana-prom-lbl" value="PromQL query&#10;(datasource)" style="edgeLabel;html=1;align=center;verticalAlign=middle;" vertex="1" connectable="0" parent="e-grafana-prom">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
