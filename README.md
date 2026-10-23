@@ -40,27 +40,7 @@ a gated Azure DevOps deployment pipeline — all from one codebase.
 
 ## Architecture
 
-An editable, enterprise-standard architecture diagram (official Azure icons,
-VNets, subnets, security boundaries) is at
-[`docs/architecture.drawio`](docs/architecture.drawio) — open with
-[app.diagrams.net](https://app.diagrams.net) or any draw.io-compatible editor.
-
-```
-GitHub (source of truth)                  Azure DevOps                      Azure
-┌──────────────────────┐   PR / push   ┌─────────────────────┐  pulumi up  ┌───────────────────────────────┐
-│ Ayodejiola/           │──────────────▶│ guestbook-monitoring │  (gated,   │ guestbook-rgf48916b4 (RG)     │
-│ guestbook-monitoring  │               │ pipeline:            │   manual   │  └─ AKS: guestbook-aksbcbd201e│
-│  main / feature / fix │               │  - Validate          │  approval) │      ├─ ns guestbook          │
-│  / ci / docs branches │               │  - DevSecOps         │───────────▶│      │   frontend (x3) ─LB─▶ http://74.151.141.67
-└──────────────────────┘               │  - Deploy (approval) │            │      │   redis-leader/replica + redis_exporter sidecars
-                                         └─────────────────────┘            │      └─ ns monitoring
-                                                                             │          kube-prometheus-stack ─LB─▶ http://20.72.180.150
-                                         guestbook-cicd-rg (RG)              │
-                                          ├─ Storage account: Pulumi state   │
-                                          │   (azblob:// backend)            │
-                                          └─ Key Vault: Pulumi secrets key   │
-                                              + Grafana admin password       │
-```
+![Architecture diagram](docs/architecture.png)
 
 **Request flow:** browser → frontend LoadBalancer → PHP frontend
 (`gb-frontend:v5`) → `redis-leader` (writes) / `redis-leader` or
