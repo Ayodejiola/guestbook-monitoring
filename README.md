@@ -10,23 +10,89 @@ are defined as a single TypeScript Pulumi program and deployed via
 
 The three things most people land here for:
 
-### 1. Deploy the application
+### 1. Deploy the application (from scratch)
+
+These are the exact, complete steps to go from nothing to a running cluster —
+nothing skipped or assumed already set up. See [Prerequisites](#prerequisites)
+first if you don't have the CLIs installed yet.
+
+**Step 1 — Clone the repo and authenticate to Azure**
 
 ```bash
-export AZURE_STORAGE_ACCOUNT=<your Pulumi state storage account name>
+git clone https://github.com/Ayodejiola/guestbook-monitoring.git
+cd guestbook-monitoring
+az login
+```
+
+**Step 2 — Bootstrap the Pulumi state backend (one-time, plain Azure CLI)**
+
+Pulumi needs somewhere to store its state before it can run at all, so this
+is created directly with `az`, not Pulumi itself:
+
+```bash
+az group create --name guestbook-cicd-rg --location eastus
+
+az storage account create \
+  --name <pick-a-globally-unique-name> \
+  --resource-group guestbook-cicd-rg \
+  --location eastus --sku Standard_LRS --kind StorageV2 \
+  --min-tls-version TLS1_2 --allow-blob-public-access false
+
+az storage container create \
+  --name pulumi-state \
+  --account-name <the-name-you-just-picked> \
+  --auth-mode login
+```
+
+**Step 3 — Point Pulumi at that backend**
+
+```bash
+export AZURE_STORAGE_ACCOUNT=<the-name-you-just-picked>
 export AZURE_STORAGE_KEY=$(az storage account keys list \
   --account-name "$AZURE_STORAGE_ACCOUNT" \
   --resource-group guestbook-cicd-rg --query "[0].value" -o tsv)
 
-npm install
 pulumi login "azblob://pulumi-state"
-pulumi stack select dev        # or: pulumi stack init dev, for a new stack
+pulumi stack init dev
+```
+
+**Step 4 — Install dependencies and set required config**
+
+```bash
+npm install
+pulumi config set azure-native:location eastus   # or your preferred region
+```
+
+**Step 5 — Deploy**
+
+```bash
 pulumi up
 ```
 
-One command provisions the AKS cluster, deploys the Guestbook app, installs
-the Prometheus/Grafana stack, and outputs the URLs below. Full details,
-prerequisites, and first-time setup are in [Getting Started](#getting-started).
+Review the plan it prints, then confirm. This single command provisions the
+resource group and AKS cluster, deploys the Guestbook app, installs the
+Prometheus/Grafana stack, creates the Key Vault, and prints the Guestbook
+URL, Grafana URL, and output names at the end. Takes roughly 10–12 minutes
+end to end.
+
+**Step 6 — (Recommended) Switch to Key Vault-backed secrets encryption**
+
+By default, step 5 encrypted the stack's secrets with a local passphrase.
+This repo's own deployment uses envelope encryption via the Key Vault that
+`pulumi up` just created instead — no passphrase to manage or share:
+
+```bash
+az keyvault key create --vault-name $(pulumi stack output keyVaultName) \
+  --name pulumi-secrets --protection software --kty RSA --size 2048
+
+pulumi stack change-secrets-provider \
+  "azurekeyvault://$(pulumi stack output keyVaultName).vault.azure.net/keys/pulumi-secrets"
+```
+
+Done — the application and monitoring stack are live. See
+[Getting Started](#getting-started) for the full rationale behind each step,
+and [CI/CD Pipeline](#cicd-pipeline) if you also want to wire this up to
+Azure DevOps.
 
 ### 2. Grafana access
 
