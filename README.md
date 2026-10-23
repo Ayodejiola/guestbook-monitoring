@@ -111,8 +111,18 @@ az keyvault secret show --vault-name guestbook-kv3f27af8e \
 pulumi stack output grafanaAdminPassword --show-secrets
 ```
 
-Log into Grafana at the URL above, then **Dashboards → Guestbook Overview**
-for live panels covering request rate, error rate, and pod resource usage.
+Log into Grafana at the URL above, then **Dashboards → Guestbook Overview**.
+
+A basic Grafana dashboard displaying metrics from the Guestbook application
+is created and configured automatically as part of `pulumi up` (no manual
+Grafana click-ops) — `dashboard.json`, loaded via a labeled ConfigMap and
+Grafana's own dashboard-provisioning sidecar. It covers:
+
+| Requirement | Panel(s) |
+|---|---|
+| Request rate | Redis commands processed/sec |
+| Error rate | Pod restart rate (proxy — neither app exposes HTTP status codes) |
+| Pod resource usage | Frontend CPU/memory per pod, Redis pod CPU, pods-up count |
 
 ### 3. Verify Prometheus is scraping Guestbook metrics
 
