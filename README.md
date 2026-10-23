@@ -334,7 +334,7 @@ az aks get-credentials --resource-group $(pulumi stack output resourceGroupName)
    kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
    ```
    Log into http://localhost:3000, open **Dashboards → Guestbook Overview**
-   for live panels covering Redis command rate, connected clients, and
+   for live panels(http://20.72.180.150/d/guestbook-overview/guestbook-overview?from=now-1h&to=now&timezone=browser&refresh=30s) covering Redis command rate, connected clients, and
    per-pod CPU/memory. Both Grafana and Prometheus are also reachable
    directly via their public LoadBalancer IPs, without port-forwarding.
 
