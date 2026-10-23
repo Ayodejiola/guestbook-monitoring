@@ -77,6 +77,19 @@
           "expr": "sum(kube_pod_status_phase{namespace=\"guestbook\", phase=\"Running\"})"
         }
       ]
+    },
+    {
+      "id": 7,
+      "title": "Error rate (pod restarts/5m, proxy)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "description": "Neither gb-frontend nor Redis expose HTTP status codes, so pod restart rate is used as the error-rate proxy: a crash-looping container is the clearest available signal of the app failing.",
+      "targets": [
+        {
+          "expr": "sum(rate(kube_pod_container_status_restarts_total{namespace=\"guestbook\"}[5m])) by (pod)",
+          "legendFormat": "{{pod}}"
+        }
+      ]
     }
   ]
 }
