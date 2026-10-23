@@ -1,7 +1,7 @@
 # Guestbook Monitoring Platform
- # Live link:
- # frontend (x3) ─LB─▶ http://74.151.141.67
- # kube-prometheus-stack ─LB─▶ http://20.72.180.150
+ ### Live link:
+ ### frontend (x3) ─LB─▶ http://74.151.141.67
+ ### kube-prometheus-stack ─LB─▶ http://20.72.180.150
 Pulumi-provisioned Kubernetes Guestbook application on Azure Kubernetes Service
 (AKS), instrumented with Prometheus and Grafana, with a full Azure DevOps
 CI/CD and DevSecOps pipeline. Infrastructure, application, and observability
