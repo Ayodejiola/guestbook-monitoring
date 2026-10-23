@@ -142,7 +142,7 @@ kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:909
 
 Open http://localhost:9090/targets — you should see **3 `UP` targets** under
 the `redis-leader-servicemonitor-*` and `redis-replica-servicemonitor-*`
-jobs. Then at http://localhost:9090/graph, confirm real data is flowing, not
+jobs (combined total). Then at http://localhost:9090/graph, confirm real data is flowing, not
 just that the target is reachable:
 
 ```promql
