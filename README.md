@@ -1,15 +1,78 @@
 # Guestbook Monitoring Platform
- ### Live link:
- ### frontend (x3) ─LB─▶ http://74.151.141.67
- ### kube-prometheus-stack ─LB─▶ http://20.72.180.150
+
 Pulumi-provisioned Kubernetes Guestbook application on Azure Kubernetes Service
 (AKS), instrumented with Prometheus and Grafana, with a full Azure DevOps
 CI/CD and DevSecOps pipeline. Infrastructure, application, and observability
 are defined as a single TypeScript Pulumi program and deployed via
 `pulumi up`.
 
+## Quick Start
+
+The three things most people land here for:
+
+### 1. Deploy the application
+
+```bash
+export AZURE_STORAGE_ACCOUNT=<your Pulumi state storage account name>
+export AZURE_STORAGE_KEY=$(az storage account keys list \
+  --account-name "$AZURE_STORAGE_ACCOUNT" \
+  --resource-group guestbook-cicd-rg --query "[0].value" -o tsv)
+
+npm install
+pulumi login "azblob://pulumi-state"
+pulumi stack select dev        # or: pulumi stack init dev, for a new stack
+pulumi up
+```
+
+One command provisions the AKS cluster, deploys the Guestbook app, installs
+the Prometheus/Grafana stack, and outputs the URLs below. Full details,
+prerequisites, and first-time setup are in [Getting Started](#getting-started).
+
+### 2. Grafana access
+
+| | |
+|---|---|
+| Guestbook URL | http://74.151.141.67 |
+| Grafana URL | http://20.72.180.150 |
+| Grafana admin user | `admin` |
+| Grafana admin password | not printed here on purpose — retrieve it: |
+
+```bash
+az keyvault secret show --vault-name guestbook-kv3f27af8e \
+  --name grafana-admin-password --query value -o tsv
+
+# or, equivalently, from Pulumi state directly:
+pulumi stack output grafanaAdminPassword --show-secrets
+```
+
+Log into Grafana at the URL above, then **Dashboards → Guestbook Overview**
+for live panels covering request rate, error rate, and pod resource usage.
+
+### 3. Verify Prometheus is scraping Guestbook metrics
+
+```bash
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+```
+
+Open http://localhost:9090/targets — you should see **3 `UP` targets** under
+the `redis-leader-servicemonitor-*` and `redis-replica-servicemonitor-*`
+jobs. Then at http://localhost:9090/graph, confirm real data is flowing, not
+just that the target is reachable:
+
+```promql
+redis_connected_clients{namespace="guestbook"}
+rate(redis_commands_processed_total{namespace="guestbook"}[5m])
+sum(container_cpu_usage_seconds_total{namespace="guestbook"}) by (pod)
+```
+
+The third query covers the frontend too — it has no metrics endpoint of its
+own, so its resource usage is scraped via the kubelet/cAdvisor job every pod
+gets automatically. Full verification walkthrough, including the Grafana
+dashboard, is in [Verification](#verification).
+
 ## Table of Contents
 
+- [Quick Start](#quick-start)
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Technology Stack](#technology-stack)
