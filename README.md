@@ -231,27 +231,23 @@ approves — `pulumi up` is never triggered by a push alone.
 
 ## Getting Started
 
-### 1. State backend and secrets provider
+For the exact, ordered commands to deploy from nothing, see
+[Quick Start → Deploy the application](#1-deploy-the-application-from-scratch).
+This section covers the reasoning behind that setup and what every identity
+touching this stack needs, in place of repeating the same steps twice (and
+risking the two copies drifting out of sync).
+
+### State backend and secrets provider
 
 Pulumi state lives in **Azure Blob Storage**, not the local filesystem, so
 both a human and an Azure Pipelines agent see the same state. Stack secrets
 are encrypted with an **Azure Key Vault key** via envelope encryption, not a
-shared passphrase.
-
-This is bootstrapped once, outside Pulumi, with plain `az` CLI commands (to
-sidestep the chicken-and-egg problem of using Pulumi to create the backend
-Pulumi itself needs):
-
-```bash
-az group create --name guestbook-cicd-rg --location eastus
-az storage account create --name <globally-unique-name> --resource-group guestbook-cicd-rg \
-  --location eastus --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 \
-  --allow-blob-public-access false
-az storage container create --name pulumi-state --account-name <name> --auth-mode login
-
-az keyvault key create --vault-name <vault> --name pulumi-secrets --protection software --kty RSA --size 2048
-pulumi stack change-secrets-provider "azurekeyvault://<vault>.vault.azure.net/keys/pulumi-secrets"
-```
+shared passphrase. The storage account is bootstrapped once, outside Pulumi,
+with plain `az` CLI commands — Pulumi can't create the backend it itself
+needs to run. The Key Vault, by contrast, **is** a Pulumi-managed resource
+(`keyvault.ts`): it only exists after the first `pulumi up`, which is why the
+secrets-provider upgrade is a step that comes *after* that first deploy, not
+before it (see Quick Start, Step 6).
 
 Anyone running `pulumi` against this stack (including CI) needs:
 
@@ -264,30 +260,7 @@ Anyone running `pulumi` against this stack (including CI) needs:
    fixed values, not derived dynamically).
 3. Normal Azure RBAC to create/read the deployed resources.
 
-### 2. Deploy
-
-Every `pulumi` command needs `AZURE_STORAGE_ACCOUNT`/`AZURE_STORAGE_KEY` set
-in that shell:
-
-```bash
-export AZURE_STORAGE_ACCOUNT=<your storage account name>
-export AZURE_STORAGE_KEY=$(az storage account keys list --account-name "$AZURE_STORAGE_ACCOUNT" \
-  --resource-group guestbook-cicd-rg --query "[0].value" -o tsv)
-
-npm install
-pulumi login "azblob://pulumi-state"
-pulumi stack select dev                # or: pulumi stack init dev, for a new stack
-pulumi config set azure-native:location eastus
-pulumi up
-```
-
-This single command provisions the resource group and AKS cluster, deploys
-the Guestbook app, installs kube-prometheus-stack via Helm, creates
-`ServiceMonitor`s for Redis, loads the Grafana dashboard, and outputs the
-Guestbook URL, Grafana URL, and credentials. A full deploy from scratch takes
-roughly 10–12 minutes.
-
-### 3. Access outputs
+### Outputs and kubeconfig
 
 ```bash
 pulumi stack output guestbookUrl
@@ -297,16 +270,8 @@ pulumi stack output keyVaultName
 ```
 
 The Grafana admin password is **never** printed in plaintext by this
-project — not in `pulumi stack output`, this README, or git history. Retrieve
-it from Key Vault or directly from Pulumi state:
-
-```bash
-az keyvault secret show --vault-name $(pulumi stack output keyVaultName) \
-  --name grafana-admin-password --query value -o tsv
-
-# or
-pulumi stack output grafanaAdminPassword --show-secrets
-```
+project — not in `pulumi stack output`, this README, or git history (see
+Quick Start → Grafana access for how to retrieve it).
 
 To pull a local kubeconfig for `kubectl`/`helm`:
 
@@ -481,5 +446,5 @@ monitoring.ts        # kube-prometheus-stack Helm release + ServiceMonitors + da
 keyvault.ts          # Azure Key Vault + pinned access policies
 dashboard.json       # Grafana dashboard definition, auto-imported at deploy time
 azure-pipelines.yml  # CI/CD + DevSecOps pipeline definition
-docs/architecture.drawio  # Editable architecture diagram (official Azure icons)
+docs/architecture.png # Architecture diagram
 ```
