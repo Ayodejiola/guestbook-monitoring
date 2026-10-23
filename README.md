@@ -1,15 +1,164 @@
 # Guestbook Monitoring Platform
- ### Live link:
- ### frontend (x3) ─LB─▶ http://74.151.141.67
- ### kube-prometheus-stack ─LB─▶ http://20.72.180.150
+
 Pulumi-provisioned Kubernetes Guestbook application on Azure Kubernetes Service
 (AKS), instrumented with Prometheus and Grafana, with a full Azure DevOps
 CI/CD and DevSecOps pipeline. Infrastructure, application, and observability
 are defined as a single TypeScript Pulumi program and deployed via
 `pulumi up`.
 
+## Quick Start
+
+The three things most people land here for:
+
+### 1. Deploy the application (from scratch)
+
+These are the exact, complete steps to go from nothing to a running cluster —
+nothing skipped or assumed already set up. See [Prerequisites](#prerequisites)
+first if you don't have the CLIs installed yet.
+
+**Step 1 — Clone the repo and authenticate to Azure**
+
+```bash
+git clone https://github.com/Ayodejiola/guestbook-monitoring.git
+cd guestbook-monitoring
+az login
+```
+
+**Step 2 — Bootstrap the Pulumi state backend (one-time, plain Azure CLI)**
+
+Pulumi needs somewhere to store its state before it can run at all, so this
+is created directly with `az`, not Pulumi itself:
+
+```bash
+az group create --name guestbook-cicd-rg --location eastus
+
+az storage account create \
+  --name <pick-a-globally-unique-name> \
+  --resource-group guestbook-cicd-rg \
+  --location eastus --sku Standard_LRS --kind StorageV2 \
+  --min-tls-version TLS1_2 --allow-blob-public-access false
+
+az storage container create \
+  --name pulumi-state \
+  --account-name <the-name-you-just-picked> \
+  --auth-mode login
+```
+
+**Step 3 — Point Pulumi at that backend**
+
+```bash
+export AZURE_STORAGE_ACCOUNT=<the-name-you-just-picked>
+export AZURE_STORAGE_KEY=$(az storage account keys list \
+  --account-name "$AZURE_STORAGE_ACCOUNT" \
+  --resource-group guestbook-cicd-rg --query "[0].value" -o tsv)
+
+pulumi login "azblob://pulumi-state"
+pulumi stack init dev
+```
+
+**Step 4 — Install dependencies and set required config**
+
+```bash
+npm install
+pulumi config set azure-native:location eastus   # or your preferred region
+```
+
+**Step 5 — Deploy**
+
+```bash
+pulumi up
+```
+
+Review the plan it prints, then confirm. This single command provisions the
+resource group and AKS cluster, deploys the Guestbook app, installs the
+Prometheus/Grafana stack, creates the Key Vault, and prints the Guestbook
+URL, Grafana URL, and output names at the end. Takes roughly 10–12 minutes
+end to end.
+
+**Step 6 — (Recommended) Switch to Key Vault-backed secrets encryption**
+
+By default, step 5 encrypted the stack's secrets with a local passphrase.
+This repo's own deployment uses envelope encryption via the Key Vault that
+`pulumi up` just created instead — no passphrase to manage or share:
+
+```bash
+az keyvault key create --vault-name $(pulumi stack output keyVaultName) \
+  --name pulumi-secrets --protection software --kty RSA --size 2048
+
+pulumi stack change-secrets-provider \
+  "azurekeyvault://$(pulumi stack output keyVaultName).vault.azure.net/keys/pulumi-secrets"
+```
+
+Done — the application and monitoring stack are live. See
+[Getting Started](#getting-started) for the full rationale behind each step,
+and [CI/CD Pipeline](#cicd-pipeline) if you also want to wire this up to
+Azure DevOps.
+
+### 2. Grafana access
+
+The values below are this live deployment's actual outputs; a fresh deploy
+gets its own URLs and vault name — always pull the real ones from the stack
+rather than hardcoding them:
+
+```bash
+pulumi stack output guestbookUrl
+pulumi stack output grafanaUrl
+pulumi stack output grafanaAdminUser
+```
+
+| | |
+|---|---|
+| Guestbook URL | http://74.151.141.67 |
+| Grafana URL | http://20.72.180.150 |
+| Grafana admin user | `admin` |
+| Grafana admin password | not printed here on purpose — retrieve it: |
+
+```bash
+az keyvault secret show --vault-name $(pulumi stack output keyVaultName) \
+  --name grafana-admin-password --query value -o tsv
+
+# or, equivalently, from Pulumi state directly:
+pulumi stack output grafanaAdminPassword --show-secrets
+```
+
+Log into Grafana at the URL above, then **Dashboards → Guestbook Overview**.
+
+A basic Grafana dashboard displaying metrics from the Guestbook application
+is created and configured automatically as part of `pulumi up` (no manual
+Grafana click-ops) — `dashboard.json`, loaded via a labeled ConfigMap and
+Grafana's own dashboard-provisioning sidecar. It covers:
+
+| Requirement | Panel(s) |
+|---|---|
+| Request rate | Redis commands processed/sec |
+| Error rate | Pod restart rate (proxy — neither app exposes HTTP status codes) |
+| Pod resource usage | Frontend CPU/memory per pod, Redis pod CPU, pods-up count |
+
+### 3. Verify Prometheus is scraping Guestbook metrics
+
+```bash
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+```
+
+Open http://localhost:9090/targets — you should see **3 `UP` targets** under
+the `redis-leader-servicemonitor-*` and `redis-replica-servicemonitor-*`
+jobs. Then at http://localhost:9090/graph, confirm real data is flowing, not
+just that the target is reachable:
+
+```promql
+redis_connected_clients{namespace="guestbook"}
+rate(redis_commands_processed_total{namespace="guestbook"}[5m])
+sum(container_cpu_usage_seconds_total{namespace="guestbook"}) by (pod)
+```
+
+The third query covers the frontend too — it has no metrics endpoint of its
+own, so its resource usage is scraped via the kubelet/cAdvisor job every pod
+gets automatically. Full verification walkthrough, including the Grafana
+dashboard, is in [Verification](#verification).
+
 ## Table of Contents
 
+- [Quick Start](#quick-start)
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Technology Stack](#technology-stack)
@@ -82,27 +231,23 @@ approves — `pulumi up` is never triggered by a push alone.
 
 ## Getting Started
 
-### 1. State backend and secrets provider
+For the exact, ordered commands to deploy from nothing, see
+[Quick Start → Deploy the application](#1-deploy-the-application-from-scratch).
+This section covers the reasoning behind that setup and what every identity
+touching this stack needs, in place of repeating the same steps twice (and
+risking the two copies drifting out of sync).
+
+### State backend and secrets provider
 
 Pulumi state lives in **Azure Blob Storage**, not the local filesystem, so
 both a human and an Azure Pipelines agent see the same state. Stack secrets
 are encrypted with an **Azure Key Vault key** via envelope encryption, not a
-shared passphrase.
-
-This is bootstrapped once, outside Pulumi, with plain `az` CLI commands (to
-sidestep the chicken-and-egg problem of using Pulumi to create the backend
-Pulumi itself needs):
-
-```bash
-az group create --name guestbook-cicd-rg --location eastus
-az storage account create --name <globally-unique-name> --resource-group guestbook-cicd-rg \
-  --location eastus --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 \
-  --allow-blob-public-access false
-az storage container create --name pulumi-state --account-name <name> --auth-mode login
-
-az keyvault key create --vault-name <vault> --name pulumi-secrets --protection software --kty RSA --size 2048
-pulumi stack change-secrets-provider "azurekeyvault://<vault>.vault.azure.net/keys/pulumi-secrets"
-```
+shared passphrase. The storage account is bootstrapped once, outside Pulumi,
+with plain `az` CLI commands — Pulumi can't create the backend it itself
+needs to run. The Key Vault, by contrast, **is** a Pulumi-managed resource
+(`keyvault.ts`): it only exists after the first `pulumi up`, which is why the
+secrets-provider upgrade is a step that comes *after* that first deploy, not
+before it (see Quick Start, Step 6).
 
 Anyone running `pulumi` against this stack (including CI) needs:
 
@@ -115,30 +260,7 @@ Anyone running `pulumi` against this stack (including CI) needs:
    fixed values, not derived dynamically).
 3. Normal Azure RBAC to create/read the deployed resources.
 
-### 2. Deploy
-
-Every `pulumi` command needs `AZURE_STORAGE_ACCOUNT`/`AZURE_STORAGE_KEY` set
-in that shell:
-
-```bash
-export AZURE_STORAGE_ACCOUNT=<your storage account name>
-export AZURE_STORAGE_KEY=$(az storage account keys list --account-name "$AZURE_STORAGE_ACCOUNT" \
-  --resource-group guestbook-cicd-rg --query "[0].value" -o tsv)
-
-npm install
-pulumi login "azblob://pulumi-state"
-pulumi stack select dev                # or: pulumi stack init dev, for a new stack
-pulumi config set azure-native:location eastus
-pulumi up
-```
-
-This single command provisions the resource group and AKS cluster, deploys
-the Guestbook app, installs kube-prometheus-stack via Helm, creates
-`ServiceMonitor`s for Redis, loads the Grafana dashboard, and outputs the
-Guestbook URL, Grafana URL, and credentials. A full deploy from scratch takes
-roughly 10–12 minutes.
-
-### 3. Access outputs
+### Outputs and kubeconfig
 
 ```bash
 pulumi stack output guestbookUrl
@@ -148,16 +270,8 @@ pulumi stack output keyVaultName
 ```
 
 The Grafana admin password is **never** printed in plaintext by this
-project — not in `pulumi stack output`, this README, or git history. Retrieve
-it from Key Vault or directly from Pulumi state:
-
-```bash
-az keyvault secret show --vault-name $(pulumi stack output keyVaultName) \
-  --name grafana-admin-password --query value -o tsv
-
-# or
-pulumi stack output grafanaAdminPassword --show-secrets
-```
+project — not in `pulumi stack output`, this README, or git history (see
+Quick Start → Grafana access for how to retrieve it).
 
 To pull a local kubeconfig for `kubectl`/`helm`:
 
@@ -184,6 +298,7 @@ az aks get-credentials --resource-group $(pulumi stack output resourceGroupName)
    ```bash
    kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
    ```
+   (http://20.72.180.150/d/guestbook-overview/guestbook-overview?from=now-1h&to=now&timezone=browser&refresh=30s)
    Log into http://localhost:3000, open **Dashboards → Guestbook Overview**
    for live panels covering Redis command rate, connected clients, and
    per-pod CPU/memory. Both Grafana and Prometheus are also reachable
@@ -332,5 +447,5 @@ monitoring.ts        # kube-prometheus-stack Helm release + ServiceMonitors + da
 keyvault.ts          # Azure Key Vault + pinned access policies
 dashboard.json       # Grafana dashboard definition, auto-imported at deploy time
 azure-pipelines.yml  # CI/CD + DevSecOps pipeline definition
-docs/architecture.drawio  # Editable architecture diagram (official Azure icons)
+docs/architecture.png # Architecture diagram
 ```
