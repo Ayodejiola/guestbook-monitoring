@@ -156,6 +156,24 @@ own, so its resource usage is scraped via the kubelet/cAdvisor job every pod
 gets automatically. Full verification walkthrough, including the Grafana
 dashboard, is in [Verification](#verification).
 
+> **`kubectl port-forward` fails with "address already in use" /
+> "bind: ... only one usage of each socket address"?** That's a local port
+> conflict, not a cluster problem — something (often a port-forward left
+> running from an earlier session) is already bound to that port locally.
+> Find and stop it, then retry:
+> ```bash
+> # macOS/Linux
+> lsof -i :9090
+> kill <pid>
+>
+> # Windows (PowerShell)
+> Get-NetTCPConnection -LocalPort 9090 | Select-Object OwningProcess
+> Stop-Process -Id <pid> -Force
+> ```
+> If the port was already forwarding successfully, you can also just use it
+> as-is — `curl http://localhost:9090/-/healthy` tells you whether it's
+> already live before you bother killing anything.
+
 ## Table of Contents(Advanced-Optional)
 
 - [Quick Start](#quick-start)
