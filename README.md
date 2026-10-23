@@ -96,6 +96,16 @@ Azure DevOps.
 
 ### 2. Grafana access
 
+The values below are this live deployment's actual outputs; a fresh deploy
+gets its own URLs and vault name — always pull the real ones from the stack
+rather than hardcoding them:
+
+```bash
+pulumi stack output guestbookUrl
+pulumi stack output grafanaUrl
+pulumi stack output grafanaAdminUser
+```
+
 | | |
 |---|---|
 | Guestbook URL | http://74.151.141.67 |
@@ -104,7 +114,7 @@ Azure DevOps.
 | Grafana admin password | not printed here on purpose — retrieve it: |
 
 ```bash
-az keyvault secret show --vault-name guestbook-kv3f27af8e \
+az keyvault secret show --vault-name $(pulumi stack output keyVaultName) \
   --name grafana-admin-password --query value -o tsv
 
 # or, equivalently, from Pulumi state directly:
