@@ -1,93 +1,115 @@
-# Guestbook + Monitoring (Pulumi, AKS, Prometheus, Grafana)
+# Guestbook Monitoring Platform
+
+Pulumi-provisioned Kubernetes Guestbook application on Azure Kubernetes Service
+(AKS), instrumented with Prometheus and Grafana, with a full Azure DevOps
+CI/CD and DevSecOps pipeline. Infrastructure, application, and observability
+are defined as a single TypeScript Pulumi program and deployed via
+`pulumi up`.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Technology Stack](#technology-stack)
+- [Prerequisites](#prerequisites)
+- [Getting Started](#getting-started)
+- [Verification](#verification)
+- [CI/CD Pipeline](#cicd-pipeline)
+- [Security](#security)
+- [Operations](#operations)
+- [Incident History](#incident-history)
+- [Known Limitations](#known-limitations)
+- [Contributing](#contributing)
+- [Project Structure](#project-structure)
+
+## Overview
 
 This project extends the [Pulumi Kubernetes Guestbook example](https://github.com/pulumi/examples/blob/master/kubernetes-ts-guestbook/README.md)
-with a Prometheus + Grafana monitoring stack, all defined and deployed with Pulumi
-(TypeScript). It also provisions the AKS cluster itself with Pulumi, so the whole
-thing - infra, app, and observability - comes up from a single `pulumi up`.
+with a Prometheus + Grafana monitoring stack. It provisions the AKS cluster
+itself, deploys the application, installs the monitoring stack, and wires up
+a gated Azure DevOps deployment pipeline — all from one codebase.
 
-## What gets deployed
-
-| Layer | Resource | Notes |
-|---|---|---|
-| Infra | AKS cluster (`cluster.ts`) | 2-node `Standard_B2s` pool, `azure-native` provider |
-| App | Guestbook (`guestbook.ts`) | Redis leader + 2 replicas + 3-replica PHP frontend, in the `guestbook` namespace. Reimplementation of the upstream example. |
-| App | `redis_exporter` sidecars | One per Redis pod, exposing real Redis metrics on port `9121` |
-| Monitoring | kube-prometheus-stack (`monitoring.ts`) | Helm chart install of Prometheus, Grafana, Alertmanager (disabled), kube-state-metrics, node-exporter, in the `monitoring` namespace |
-| Monitoring | 2x `ServiceMonitor` | Point Prometheus at the Redis leader/replica metrics endpoints |
-| Monitoring | Grafana dashboard | `dashboard.json`, auto-imported via a labeled ConfigMap + Grafana's dashboard sidecar |
-| Secrets | Azure Key Vault (`keyvault.ts`) | Holds the generated Grafana admin password - nothing sensitive is printed in this README, committed to git, or needed in chat |
-
-### Design decisions / how metrics are exposed
-
-The assignment allows "simple metrics, such as the number of requests or resource
-usage," via ServiceMonitors or annotations. This implementation covers both halves
-of the stack differently, on purpose:
-
-- **Backend (Redis):** each Redis pod runs an `oliver006/redis_exporter` sidecar,
-  with its own Service + `ServiceMonitor`. Prometheus scrapes real Redis metrics:
-  commands processed/sec, connected clients, memory, etc. This is the literal
-  "ServiceMonitor scraping a backend service" the assignment describes.
-- **Frontend (PHP/Guestbook):** the upstream `gb-frontend` image has no metrics
-  endpoint of its own, so instrumenting "number of requests" would mean forking
-  the app image, which is out of scope for a monitoring exercise. Instead, the
-  frontend's **resource usage** (CPU, memory) is observed via the kubelet/cAdvisor
-  metrics that kube-prometheus-stack already scrapes for every pod in the cluster,
-  out of the box, no extra config needed. This satisfies the assignment's own
-  "resource usage" example and is shown in the dashboard.
+**Metrics strategy:**
+- **Backend (Redis):** each Redis pod runs an `oliver006/redis_exporter`
+  sidecar with its own `Service` + `ServiceMonitor`, so Prometheus scrapes
+  real Redis metrics (commands/sec, connected clients, memory).
+- **Frontend:** the upstream `gb-frontend` image exposes no metrics endpoint
+  of its own, so resource usage (CPU/memory) is observed via the
+  kubelet/cAdvisor metrics kube-prometheus-stack already scrapes for every
+  pod, with no extra configuration required.
 
 ## Architecture
 
+An editable, enterprise-standard architecture diagram (official Azure icons,
+VNets, subnets, security boundaries) is at
+[`docs/architecture.drawio`](docs/architecture.drawio) — open with
+[app.diagrams.net](https://app.diagrams.net) or any draw.io-compatible editor.
+
 ```
 GitHub (source of truth)                  Azure DevOps                      Azure
-┌──────────────────────┐   PR / push   ┌───────────────────┐   pulumi up   ┌──────────────────────────────┐
-│ Ayodejiola/           │──────────────▶│ guestbook-monitoring│  (gated,    │ guestbook-rgf48916b4 (RG)    │
-│ guestbook-monitoring  │               │ pipeline:           │   manual    │  └─ AKS: guestbook-aksbcbd201e│
-│  main / feature / fix │               │  - Validate         │  approval)  │      ├─ ns guestbook          │
-│  / ci / docs branches │               │  - DevSecOps        │─────────────▶│      │   frontend (x3) ──LB──▶ http://74.151.141.67
-└──────────────────────┘               │  - Deploy (approval)│             │      │   redis-leader/replica + redis_exporter sidecars
-                                         └───────────────────┘             │      └─ ns monitoring
-                                                                             │          kube-prometheus-stack (Prometheus, Grafana) ──LB──▶ http://20.72.180.150
-                                                                             │
+┌──────────────────────┐   PR / push   ┌─────────────────────┐  pulumi up  ┌───────────────────────────────┐
+│ Ayodejiola/           │──────────────▶│ guestbook-monitoring │  (gated,   │ guestbook-rgf48916b4 (RG)     │
+│ guestbook-monitoring  │               │ pipeline:            │   manual   │  └─ AKS: guestbook-aksbcbd201e│
+│  main / feature / fix │               │  - Validate          │  approval) │      ├─ ns guestbook          │
+│  / ci / docs branches │               │  - DevSecOps         │───────────▶│      │   frontend (x3) ─LB─▶ http://74.151.141.67
+└──────────────────────┘               │  - Deploy (approval) │            │      │   redis-leader/replica + redis_exporter sidecars
+                                         └─────────────────────┘            │      └─ ns monitoring
+                                                                             │          kube-prometheus-stack ─LB─▶ http://20.72.180.150
                                          guestbook-cicd-rg (RG)              │
                                           ├─ Storage account: Pulumi state   │
                                           │   (azblob:// backend)            │
-                                          └─ guestbook-kv (Key Vault):       │
-                                              Pulumi secrets-provider key +  │
-                                              Grafana admin password         │
+                                          └─ Key Vault: Pulumi secrets key   │
+                                              + Grafana admin password       │
 ```
 
-Request flow: a browser hits the frontend LoadBalancer → PHP frontend (`gb-frontend:v5`) →
-`redis-leader` for writes / `redis-leader` or `redis-replica` for reads. Each Redis pod's
-`redis_exporter` sidecar, plus the kubelet/cAdvisor metrics every pod already exposes, are
-scraped by Prometheus (via `ServiceMonitor`s and the cluster-wide kubelet job
-respectively) and rendered in the auto-provisioned Grafana dashboard.
+**Request flow:** browser → frontend LoadBalancer → PHP frontend
+(`gb-frontend:v5`) → `redis-leader` (writes) / `redis-leader` or
+`redis-replica` (reads). Each Redis pod's `redis_exporter` sidecar, plus the
+cluster-wide kubelet/cAdvisor job, are scraped by Prometheus and rendered in
+the auto-provisioned Grafana dashboard.
 
-Deployment flow: a change lands on a `feature`/`fix`/`ci`/`docs` branch → PR into `main` →
-Azure Pipelines runs `Validate` (build/lint/`pulumi preview`/Helm template) and
-`DevSecOps` (secret/dependency/container scans + SBOM) on every PR and push → merging to
-`main` makes the `Deploy` stage eligible to run, but it stays paused behind a real Azure
-DevOps Environment approval check until a human approves it - `pulumi up` is never
-triggered by a push alone.
+**Deployment flow:** a change lands on a `feature`/`fix`/`ci`/`docs` branch →
+PR into `main` → Azure Pipelines runs `Validate` (build, lint, `pulumi
+preview`, Helm template) and `DevSecOps` (secret/dependency/container scans +
+SBOM) on every PR and push → merging to `main` makes `Deploy` eligible, but it
+stays paused behind an Azure DevOps Environment approval check until a human
+approves — `pulumi up` is never triggered by a push alone.
+
+## Technology Stack
+
+| Layer | Technology |
+|---|---|
+| Infrastructure as Code | Pulumi (TypeScript) |
+| Cloud provider | Azure (`azure-native` provider) |
+| Compute | Azure Kubernetes Service (AKS) |
+| Application | PHP Guestbook frontend, Redis (leader/replica) |
+| Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager, kube-state-metrics, node-exporter) via Helm |
+| Secrets | Azure Key Vault (envelope encryption for Pulumi state + app secrets) |
+| State backend | Azure Blob Storage |
+| CI/CD | Azure DevOps Pipelines |
+| Source control | GitHub |
+| Security tooling | gitleaks, npm audit, Trivy, CycloneDX SBOM |
 
 ## Prerequisites
 
 - [Pulumi CLI](https://www.pulumi.com/docs/install/) (tested with v3.271.0)
 - [Node.js](https://nodejs.org/) 18+ (tested with v24.20.0)
 - An Azure subscription + [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), logged in (`az login`)
-- `kubectl` and `helm` (helm isn't strictly required to deploy - Pulumi's Helm provider
-  handles that - but it's useful for troubleshooting)
+- `kubectl` and `helm` (not required to deploy — Pulumi's Helm provider
+  handles that — but useful for troubleshooting)
 
-## State backend and secrets
+## Getting Started
 
-Pulumi state lives in **Azure Blob Storage**, not the local filesystem, so both a
-human running `pulumi up` from their laptop and an Azure Pipelines agent see the
-same state. Stack secrets (currently just the Grafana admin password at the
-Pulumi-state level - the actual value lives in Key Vault, see below) are encrypted
-with an **Azure Key Vault key** via envelope encryption, not a shared passphrase.
+### 1. State backend and secrets provider
 
-This was deliberately bootstrapped *outside* Pulumi, with plain `az` CLI commands,
-to sidestep the chicken-and-egg problem of using Pulumi to create the bucket Pulumi
-itself needs in order to run:
+Pulumi state lives in **Azure Blob Storage**, not the local filesystem, so
+both a human and an Azure Pipelines agent see the same state. Stack secrets
+are encrypted with an **Azure Key Vault key** via envelope encryption, not a
+shared passphrase.
+
+This is bootstrapped once, outside Pulumi, with plain `az` CLI commands (to
+sidestep the chicken-and-egg problem of using Pulumi to create the backend
+Pulumi itself needs):
 
 ```bash
 az group create --name guestbook-cicd-rg --location eastus
@@ -95,34 +117,26 @@ az storage account create --name <globally-unique-name> --resource-group guestbo
   --location eastus --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 \
   --allow-blob-public-access false
 az storage container create --name pulumi-state --account-name <name> --auth-mode login
-```
 
-Then, once logged into that backend (`pulumi login azblob://pulumi-state` with
-`AZURE_STORAGE_ACCOUNT`/`AZURE_STORAGE_KEY` set - the key comes from
-`az storage account keys list`, never committed anywhere), the stack's secrets
-provider was switched from a local passphrase to the Key Vault key created in
-`keyvault.ts`:
-
-```bash
 az keyvault key create --vault-name <vault> --name pulumi-secrets --protection software --kty RSA --size 2048
 pulumi stack change-secrets-provider "azurekeyvault://<vault>.vault.azure.net/keys/pulumi-secrets"
 ```
 
-Anyone running `pulumi` commands against this stack (including CI) needs:
-1. `AZURE_STORAGE_ACCOUNT` + `AZURE_STORAGE_KEY` env vars (or RBAC `Storage Blob
-   Data Contributor` on the storage account, as an alternative to a shared key)
-   to read/write state.
-2. Azure AD access to the Key Vault key's `encrypt`/`decrypt`/`wrapKey`/`unwrapKey`
-   permissions (granted via that vault's access policy in `keyvault.ts` - see the
-   `ciServicePrincipalObjectId` config value for granting a CI identity access) to
-   decrypt secrets.
-3. Normal Azure RBAC to actually create/read the deployed resources.
+Anyone running `pulumi` against this stack (including CI) needs:
 
-## Deploy
+1. `AZURE_STORAGE_ACCOUNT` + `AZURE_STORAGE_KEY` env vars (or RBAC `Storage
+   Blob Data Contributor` on the storage account) to read/write state.
+2. Azure AD access to the Key Vault key's `encrypt`/`decrypt`/`wrapKey`/
+   `unwrapKey` permissions, granted via a **pinned** access-policy entry in
+   `keyvault.ts` (`ownerObjectId` / `ciServicePrincipalObjectId` config
+   values — see [Incident History](#incident-history) for why these are
+   fixed values, not derived dynamically).
+3. Normal Azure RBAC to create/read the deployed resources.
 
-Every `pulumi` command below needs `AZURE_STORAGE_ACCOUNT`/`AZURE_STORAGE_KEY` set
-in that shell (fetch the key once per session with `az storage account keys list`
-and export both - Pulumi doesn't persist them for you):
+### 2. Deploy
+
+Every `pulumi` command needs `AZURE_STORAGE_ACCOUNT`/`AZURE_STORAGE_KEY` set
+in that shell:
 
 ```bash
 export AZURE_STORAGE_ACCOUNT=<your storage account name>
@@ -131,28 +145,18 @@ export AZURE_STORAGE_KEY=$(az storage account keys list --account-name "$AZURE_S
 
 npm install
 pulumi login "azblob://pulumi-state"
-pulumi stack select dev                # or: pulumi stack init dev, for a brand-new stack
-pulumi config set azure-native:location eastus   # or your preferred region
+pulumi stack select dev                # or: pulumi stack init dev, for a new stack
+pulumi config set azure-native:location eastus
 pulumi up
 ```
 
-This single command:
+This single command provisions the resource group and AKS cluster, deploys
+the Guestbook app, installs kube-prometheus-stack via Helm, creates
+`ServiceMonitor`s for Redis, loads the Grafana dashboard, and outputs the
+Guestbook URL, Grafana URL, and credentials. A full deploy from scratch takes
+roughly 10–12 minutes.
 
-1. Creates a resource group and an AKS cluster via `azure-native`.
-2. Pulls an admin kubeconfig from the newly created cluster and uses it to
-   configure the Pulumi Kubernetes provider, in the same program (no manual
-   `az aks get-credentials` step required for the deploy itself).
-3. Deploys the Guestbook app into the `guestbook` namespace.
-4. Installs kube-prometheus-stack (Prometheus + Grafana) into the `monitoring`
-   namespace via Helm, configured to discover `ServiceMonitor`s across all
-   namespaces.
-5. Creates `ServiceMonitor`s for the Redis leader/replica metrics endpoints.
-6. Loads a pre-built "Guestbook Overview" Grafana dashboard automatically.
-7. Outputs the Guestbook URL, Grafana URL, and Grafana admin credentials.
-
-A full deploy from scratch (new AKS cluster included) takes roughly 10-12 minutes.
-
-## Outputs / access
+### 3. Access outputs
 
 ```bash
 pulumi stack output guestbookUrl
@@ -161,81 +165,181 @@ pulumi stack output grafanaAdminUser
 pulumi stack output keyVaultName
 ```
 
-The Grafana admin password is **not** printed by `pulumi stack output` in plaintext
-and is not in this README or git history. It's generated by `@pulumi/random`,
-stored as an encrypted Pulumi secret, and also written to an Azure Key Vault
-(`keyVaultName` above) as the secret `grafana-admin-password`. Retrieve it with
-either:
+The Grafana admin password is **never** printed in plaintext by this
+project — not in `pulumi stack output`, this README, or git history. Retrieve
+it from Key Vault or directly from Pulumi state:
 
 ```bash
-# From Key Vault (requires access to the subscription this was deployed into)
 az keyvault secret show --vault-name $(pulumi stack output keyVaultName) \
   --name grafana-admin-password --query value -o tsv
 
-# Or directly from Pulumi state
+# or
 pulumi stack output grafanaAdminPassword --show-secrets
 ```
 
-### This deployment's live values (as of 2026-10-22)
-
-| | |
-|---|---|
-| Guestbook URL | http://74.151.141.67 |
-| Grafana URL | http://20.72.180.150 |
-| Grafana admin user | `admin` |
-| Grafana admin password | stored in Key Vault `guestbook-kv3f27af8e`, secret `grafana-admin-password` |
-| Resource group | `guestbook-rgf48916b4` |
-| AKS cluster | `guestbook-aksbcbd201e` (region: `eastus`) |
-
-Both LoadBalancers are public with no IP allowlist, since this is a throwaway
-demo cluster; don't reuse this cluster for anything beyond this exercise.
-**This cluster is left running for review** - when you're done, destroy it to
-stop Azure billing (see below).
-
-To pull a local kubeconfig for `kubectl`/`helm` troubleshooting:
+To pull a local kubeconfig for `kubectl`/`helm`:
 
 ```bash
 az aks get-credentials --resource-group $(pulumi stack output resourceGroupName) \
   --name $(pulumi stack output clusterName)
 ```
 
-## Verifying Guestbook metrics are being scraped
+## Verification
 
-1. **Check Prometheus has discovered the Redis targets:**
-
+1. **Prometheus target discovery:**
    ```bash
    kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
    ```
+   Open http://localhost:9090/targets — 3 `UP` targets under the
+   `redis-leader-servicemonitor-*` and `redis-replica-servicemonitor-*` jobs.
 
-   Open http://localhost:9090/targets - you should see 3 `UP` targets under the
-   `serviceMonitor/guestbook/redis-leader-servicemonitor-*` and
-   `.../redis-replica-servicemonitor-*` jobs (one leader pod + two replica pods).
+2. **Query real metric data** at http://localhost:9090/graph:
+   - `redis_connected_clients{namespace="guestbook"}`
+   - `rate(redis_commands_processed_total{namespace="guestbook"}[5m])`
+   - `sum(container_cpu_usage_seconds_total{namespace="guestbook"}) by (pod)`
 
-2. **Query real metric data:**
-
-   At http://localhost:9090/graph, run:
-   - `redis_connected_clients{namespace="guestbook"}` - Redis-reported client counts
-   - `rate(redis_commands_processed_total{namespace="guestbook"}[5m])` - command throughput
-   - `sum(container_cpu_usage_seconds_total{namespace="guestbook"}) by (pod)` - per-pod
-     CPU usage for every Guestbook pod, frontend included, via the built-in
-     kubelet/cAdvisor scrape targets (no extra config - confirms "resource usage"
-     metrics for the frontend)
-
-3. **View it in Grafana:**
-
+3. **Grafana dashboard:**
    ```bash
    kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
    ```
+   Log into http://localhost:3000, open **Dashboards → Guestbook Overview**
+   for live panels covering Redis command rate, connected clients, and
+   per-pod CPU/memory. Both Grafana and Prometheus are also reachable
+   directly via their public LoadBalancer IPs, without port-forwarding.
 
-   Log into http://localhost:3000 with the admin credentials above, open
-   **Dashboards → Guestbook Overview**. It should show live panels for Redis
-   command rate, connected clients, and per-pod CPU/memory for both the frontend
-   and Redis tiers.
+**Local checks** (mirrors exactly what the pipeline's `Validate`/`DevSecOps`
+stages run):
 
-   (Both Grafana and Prometheus are also reachable directly via their public
-   LoadBalancer IPs above, without port-forwarding.)
+```bash
+npm run build          # tsc --noEmit
+npm run lint            # ESLint
+npm run format:check    # Prettier
+pulumi preview           # infrastructure diff, no apply
+```
 
-## Project layout
+## CI/CD Pipeline
+
+Organization: `https://dev.azure.com/ayo2corra`, project
+`guestbook-monitoring`. Definition: [`azure-pipelines.yml`](azure-pipelines.yml).
+
+| Stage | Purpose | Status |
+|---|---|---|
+| **Validate** | `npm run build`/`lint`/`format:check`, `pulumi preview`, Helm template render | ✅ Live, passing |
+| **DevSecOps** | gitleaks, `npm audit`, Trivy (container scan), CycloneDX SBOM | ✅ Live, passing |
+| **Deploy** | `pulumi up`, gated behind the `guestbook-dev` Environment's manual approval check | ✅ Live, verified end-to-end |
+
+Live, verified infrastructure (checked directly against the Azure DevOps API):
+- GitHub service connection (`guestbook-monitoring-github`) for repo checkout
+- Azure RM service connection (`guestbook-monitoring-azurerm`), backed by a
+  service principal scoped to only the two resource groups this project
+  uses — not the subscription
+- Variable group (`guestbook-monitoring-state`) with the Pulumi backend
+  credentials, `AZURE_STORAGE_KEY` stored as a secret variable
+- `guestbook-dev` Environment with a real approval check
+  (`minRequiredApprovers: 1`) — confirmed to actually pause the pipeline
+
+A full green run (build → lint → `pulumi preview` → security scans → human
+approval → `pulumi up` → output verification) has been executed and verified
+end-to-end against this live pipeline.
+
+## Security
+
+| Control | Tool | Result |
+|---|---|---|
+| Secret detection | gitleaks v8.21.2 | Clean — full git history scanned, 0 leaks |
+| Dependency scanning | `npm audit --audit-level=high` | Clean — 0 vulnerabilities |
+| Container scan — `redis:7.2-alpine` | Trivy v0.76.1 | Clean |
+| Container scan — `redis_exporter` | Trivy v0.76.1 | Fixed — 6 HIGH Go-stdlib CVEs in `v1.62.0-alpine`; bumped to `v1.95.0-alpine`, re-scanned clean, deployed |
+| Container scan — `gb-frontend:v5` | Trivy v0.76.1 | Accepted exception — unmaintained upstream image, no newer tag published; reported as a non-gating, auditable finding (not suppressed) |
+| SBOM | CycloneDX | Generated in CI, published as a pipeline artifact |
+| IaC static scan (Checkov/tfsec) | — | Not applicable — these parse Terraform/ARM/CloudFormation; this project is a Pulumi TypeScript program. Equivalent coverage: `tsc`, ESLint, `pulumi preview` |
+| SAST | — | Not yet wired in; tracked as a gap, not a false pass |
+
+**Secrets management:** no credential (Grafana password, storage account key,
+service principal secret) is ever committed to git or printed in this
+document. Generated secrets live in Azure Key Vault; CI secrets live in an
+Azure DevOps secret variable or the Key Vault-backed Pulumi secrets provider.
+
+**Repository controls:** branch protection on `main` (no force-push, no
+deletion, PR required), GitHub secret scanning + push protection, and
+Dependabot security updates are all enabled.
+
+## Operations
+
+### Rollback and recovery
+
+- **Application/infra rollback:** `git revert` the offending commit, then
+  either wait for an approved `Deploy` run or run `pulumi up` manually.
+  `pulumi preview` always shows the exact change before it happens.
+- **Pulumi state recovery:** take a `pulumi stack export` backup before any
+  manual (non-Pulumi) change to a managed resource; reconcile drift with
+  `pulumi refresh`, never `pulumi state delete`/`import` as a first resort.
+- **Stuck/failed Helm release:** `helm list -n <namespace>` to check real
+  status; if `failed`, `helm uninstall` it, then `pulumi refresh` before the
+  next `pulumi up`.
+- **Full teardown:** `pulumi destroy` removes the AKS cluster and its
+  resource group. `guestbook-cicd-rg` (Pulumi state storage) is intentionally
+  a separate, outside-the-program resource group, so a destroy can never
+  delete the state backend it depends on.
+
+```bash
+pulumi destroy
+```
+
+## Incident History
+
+Real incidents from building and operating this platform — documented with
+root cause, fix, and verification evidence, not reconstructed after the fact.
+
+| # | Incident | Root cause | Fix |
+|---|---|---|---|
+| 1 | Helm release naming collision → node-exporter port conflict | Renaming a Pulumi `Release` triggered a create-before-delete replace; two releases briefly held the same `hostPort: 9100` on a 2-node pool | `helm uninstall` both releases, `pulumi refresh`, clean `pulumi up` |
+| 2 | Pulumi state desync after manual `helm uninstall` | Pulumi's state still referenced a Helm release deleted out-of-band, so it tried to *upgrade* a release that no longer existed | `pulumi stack export` backup → `pulumi refresh` to reconcile → verified plan → apply |
+| 3 | Guestbook Submit button silently failed | `gb-frontend:v5` has Redis hostnames (`redis-leader`/`redis-follower`) hardcoded; Pulumi's autonamed Services didn't match | Pinned explicit `metadata.name` on the two app-facing Services |
+| 4 | `pulumi preview` failed in CI: "Authenticating using the Azure CLI is only supported as a User" | Pulumi's `azure-native` provider rejects an inherited `az login --service-principal` session | `addSpnToEnvironment: true` + native `ARM_*` env vars in the pipeline |
+| 5 | Trivy install step failed with no usable error | Pinned Trivy release tag no longer existed upstream | Verified current tag via the releases API, pinned to a confirmed-existing version |
+| 6 | DevSecOps stage always reported `succeededWithIssues` | `continueOnError` on an accepted CVE exception masked the stage's true pass/fail signal for every run | Made the accepted-exception scan genuinely non-gating (no exit-code signal) while keeping a hard-fail scan on images this project controls |
+| 7 | Deploy job failed: `npm ci` had no `package-lock.json` | Azure Pipelines `deployment:` jobs don't check out the repo by default, unlike regular jobs | Added explicit `checkout: self` as the Deploy job's first step |
+| 8 | "Record release outputs" step failed with no Azure credentials | A separate `script:` step doesn't inherit the prior `AzureCLI@2` task's auth session or env vars | Merged the reporting logic into the same authenticated step |
+| 9 | CI's `pulumi up` silently revoked the human owner's Key Vault access | The vault's "owner" access policy was derived from *whoever is currently running Pulumi* — which resolved to the CI service principal when CI ran it, collapsing the declared policy to one entry | Pinned both identities (`ownerObjectId`, `ciServicePrincipalObjectId`) as fixed config values instead of deriving one dynamically; access manually restored before the fix via `az keyvault set-policy` |
+
+Each incident above was caught via a real failed run or a direct symptom, root-caused with command-level evidence, fixed, and re-verified against the live system before being marked resolved.
+
+## Known Limitations
+
+- No automated post-deploy smoke test yet (e.g. an automated
+  `cmd=set`/`cmd=get` round-trip against the live guestbook) — incident 3 was
+  only caught by manual testing.
+- No SAST tool wired in yet.
+- `gcr.io/google-samples/gb-frontend:v5` carries known HIGH-severity CVEs in
+  its Debian base image with no newer upstream tag available — accepted,
+  documented exception, not a false "clean" result.
+- The service principal backing the Azure RM service connection was created
+  directly by the repository owner, not scripted end-to-end: the underlying
+  `az ad sp create-for-rbac` and RBAC role assignment require
+  Owner/User-Access-Administrator-equivalent rights, reserved for a human to
+  grant. Day-to-day `pulumi up` only needs Contributor on the two resource
+  groups this project uses.
+- Both the Guestbook and Grafana LoadBalancers are public with no IP
+  allowlist — acceptable for this review/demo context, not a
+  production-appropriate configuration.
+
+## Contributing
+
+**Branching:**
+
+| Prefix | Purpose |
+|---|---|
+| `main` | Stable, reviewed, protected — PRs required |
+| `feature/<name>` | New capabilities |
+| `fix/<name>` | Bug fixes |
+| `docs/<name>` | Documentation-only changes |
+| `ci/<name>` | Pipeline / DevSecOps work |
+
+Commits are small and scoped to one logical change; messages state what was
+verified (commands run, actual results), not just what was intended.
+
+## Project Structure
 
 ```
 Pulumi.yaml          # Pulumi project definition
@@ -243,228 +347,8 @@ index.ts             # Entry point: wires cluster -> guestbook -> monitoring, ex
 cluster.ts           # AKS cluster + resource group (azure-native)
 guestbook.ts         # Redis leader/replica + frontend Deployments/Services, with redis_exporter sidecars
 monitoring.ts        # kube-prometheus-stack Helm release + ServiceMonitors + dashboard ConfigMap
-keyvault.ts           # Azure Key Vault for the Grafana admin password
-dashboard.json        # Grafana dashboard definition, auto-imported at deploy time
+keyvault.ts          # Azure Key Vault + pinned access policies
+dashboard.json       # Grafana dashboard definition, auto-imported at deploy time
+azure-pipelines.yml  # CI/CD + DevSecOps pipeline definition
+docs/architecture.drawio  # Editable architecture diagram (official Azure icons)
 ```
-
-## GitHub branch and pull-request workflow
-
-- `main` - stable, reviewed. Protected: no force-push, no deletion, PRs required
-  (via GitHub branch protection).
-- `feature/<name>` - new capability branches.
-- `fix/<name>` - bug fixes.
-- `docs/<name>` - documentation-only changes.
-- `ci/<name>` - pipeline/DevSecOps work.
-
-Secret scanning + push protection and Dependabot security updates are enabled on
-the repository. Commits are small and scoped to one logical change each; every
-commit message states what was verified (commands run, actual results), not just
-what was intended.
-
-## Azure DevOps pipeline
-
-Organization: `https://dev.azure.com/ayo2corra`, project `guestbook-monitoring`.
-Pipeline definition: [`azure-pipelines.yml`](azure-pipelines.yml).
-
-**Verified live and working** (checked directly against the Azure DevOps API, not
-assumed):
-- GitHub service connection `guestbook-monitoring-github` (`isReady: true`),
-  used for repository checkout.
-- Variable group `guestbook-monitoring-state`, holding `AZURE_STORAGE_ACCOUNT`
-  and a secret `AZURE_STORAGE_KEY`, authorized for pipeline use.
-- Environment `guestbook-dev` with a configured **Approval** check (`type:
-  Approval`, `minRequiredApprovers: 1`) - the `Deploy` stage genuinely cannot run
-  unapproved; this isn't just a YAML comment saying so.
-- The `Validate` (build/lint/format/Helm template) and `DevSecOps`
-  (secrets/dependencies/containers/SBOM) stage logic has been run locally with
-  the exact same commands the pipeline uses - see "Security findings" below for
-  real results.
-- **Azure RM service connection** `guestbook-monitoring-azurerm` (`isReady:
-  true`), backed by a dedicated service principal (`guestbook-monitoring-ado`)
-  scoped to just the two resource groups this project uses (`Contributor` on
-  `guestbook-rgf48916b4` and `guestbook-cicd-rg` only, not the subscription).
-  That service principal also has Key Vault access (`ciServicePrincipalObjectId`
-  in `Pulumi.dev.yaml`), verified via `az keyvault show` showing both access
-  policy entries live.
-
-**Not yet connected** - documented rather than silently skipped:
-1. **The Azure Pipeline resource's GitHub trigger/webhook.** `az pipelines create`
-   against a PAT-based GitHub service connection fails server-side with *"Could
-   not create service hooks subscription. The repository does not reference a
-   service connection"* - a known rough edge when the connection wasn't created
-   via Azure DevOps's own GitHub OAuth/App consent flow. The fix is the standard,
-   one-time, ~30-second manual step Microsoft designs for this exact case:
-   **Azure DevOps → Pipelines → New pipeline → GitHub → authorize → select
-   `Ayodejiola/guestbook-monitoring` → it auto-detects `azure-pipelines.yml`.**
-   This also finishes wiring the GitHub webhook so pushes/PRs trigger runs
-   automatically, which a script-created connection cannot reliably do.
-
-Until that's done, the pipeline is **prepared and able to authenticate, but not
-yet executing in Azure DevOps**. Everything it would run has been run and
-verified locally (results below), but there is no Azure Pipelines run history to
-link to yet.
-
-## Security findings
-
-Real results from running the DevSecOps stage's tools locally (same versions/
-commands the pipeline uses):
-
-| Check | Tool | Result |
-|---|---|---|
-| Secret detection | gitleaks v8.21.2 | **Clean** - 6 commits scanned, 0 leaks (covers the full rewritten git history) |
-| Dependency scan | `npm audit --audit-level=high` | **Clean** - 0 vulnerabilities |
-| Container scan | Trivy v0.76.1, `redis:7.2-alpine` | **Clean** - 0 vulnerabilities |
-| Container scan | Trivy v0.76.1, `oliver006/redis_exporter` | **Fixed** - `v1.62.0-alpine` had 6 HIGH Go-stdlib CVEs (DoS-class, in `net/http`/`crypto/tls`/`net/url`); bumped to `v1.95.0-alpine`, re-scanned clean, deployed and verified running |
-| Container scan | Trivy v0.76.1, `gcr.io/google-samples/gb-frontend:v5` | **Accepted exception** - several HIGH CVEs in Debian base packages (`openssl`, `ncurses`); this is an unmaintained Google example image with no newer tag published upstream. Not silently ignored: tracked here as a known, unresolved limitation of using the assignment's specified example image |
-| SBOM | `@cyclonedx/cyclonedx-npm` | Generated successfully (not committed - it's a build artifact, regenerate via the pipeline or `npx @cyclonedx/cyclonedx-npm`) |
-| IaC static scan (Checkov/tfsec) | - | **Not applicable** - these parse Terraform/ARM/CloudFormation/Helm-values files; this project's infrastructure is a Pulumi TypeScript program. Equivalent coverage: `tsc --noEmit`, ESLint, and `pulumi preview` (all run, all clean) |
-| SAST | - | **Not run** - no dedicated SAST tool is wired in yet; the codebase is infrastructure-definition code (no business logic, no user input handling), which somewhat limits SAST's applicability here, but this is recorded as a gap, not a pass |
-
-## Troubleshooting guide / investigated deployment incidents
-
-Three incidents occurred while building this and are documented here with real
-root causes and verification, not reconstructed after the fact.
-
-### 1. Helm release naming collision → node-exporter port conflict
-
-- **Symptoms/impact:** `pulumi up` timed out installing `kube-prometheus-stack`
-  after renaming the Helm release (adding an explicit `name:`), with Helm
-  reporting `context deadline exceeded`.
-- **Evidence/root cause:** `kubectl get pods -n monitoring` showed **two** full
-  kube-prometheus-stack installs running simultaneously - the old auto-named
-  release (`kube-prometheus-stack-7e067ea6`, still `deployed`) and the new one
-  (`kube-prometheus-stack`, `failed`). Both ship a `prometheus-node-exporter`
-  `DaemonSet` that binds `hostPort: 9100` on every node; with two releases
-  present, the second release's node-exporter pods stayed `Pending` (port
-  already bound by the first release's pods on the same 2-node pool), so Helm's
-  "wait for pods ready" check never succeeded within the timeout.
-- **Root cause category:** resource ownership / naming - changing a Pulumi
-  `Release`'s `name` triggers a create-before-delete replace, and the "before"
-  half of that briefly left two Helm releases claiming the same host ports.
-- **Corrective change:** `helm uninstall` both the failed and the stale old
-  release to clear the port conflict, then `pulumi refresh` (see incident 2) and
-  a clean `pulumi up`.
-- **Validation:** `helm list -n monitoring` showed one release in `deployed`
-  state; `kubectl get pods -n monitoring` showed exactly one
-  `prometheus-node-exporter` pod per node, both `Running`.
-- **Remaining limitation:** Pulumi's Helm `Release` resource doesn't itself
-  guard against this class of collision; it's a property of the chart
-  (hostPort-binding DaemonSets) combined with a rename-triggered replace. No
-  code change was made to prevent a recurrence beyond always giving the release
-  an explicit `name` up front (now the case in `monitoring.ts`).
-
-### 2. Pulumi state desynchronization after a manual `helm uninstall`
-
-- **Symptoms/impact:** the next `pulumi up` after incident 1's manual
-  `helm uninstall` failed immediately with `"kube-prometheus-stack" has no
-  deployed releases`.
-- **Evidence/root cause:** Pulumi's state still recorded the `Release` resource
-  as existing (from the prior failed-but-partially-applied update) and
-  attempted a Helm *upgrade* against it; since the release had just been deleted
-  out-of-band via `helm uninstall`, Helm had nothing to upgrade.
-- **Corrective change:** `pulumi stack export` (full state backup, saved outside
-  the repo directory before touching anything) → `pulumi refresh --yes` to
-  reconcile Pulumi's state with the cluster's actual reality (this removed the 2
-  stale/conflicting resource entries Pulumi could no longer find) → `pulumi
-  preview` to confirm the resulting plan was exactly "create 1 Helm release,
-  nothing else" before applying.
-- **Validation:** `pulumi up` then completed cleanly (`1 created`, 19
-  unchanged); live cluster state matched Pulumi's state afterward (`pulumi
-  preview` → `22 unchanged`).
-- **Rollback/recovery procedure used:** the state backup taken before `refresh`
-  was never needed (refresh succeeded cleanly), but was retained until the
-  cluster was independently verified healthy.
-- **Preventive control:** none added beyond documenting the correct recovery
-  sequence here; the underlying lesson is "don't `helm uninstall` a
-  Pulumi-managed release out of band without immediately following with
-  `pulumi refresh` before the next `pulumi up`."
-
-### 3. Guestbook Submit button did nothing (Redis Service DNS-name mismatch)
-
-- **Symptoms/impact:** the deployed guestbook's Submit button produced no
-  visible error and silently failed to save entries.
-- **Evidence/root cause:** `curl`-ing the frontend's `guestbook.php?cmd=set`
-  endpoint directly returned a PHP fatal error:
-  `getaddrinfo failed: Name or service not known [tcp://redis-leader:6379]`
-  (write path) and `[tcp://redis-follower:6379]` (read path). The `gb-frontend:v5`
-  image has these two Redis hostnames hardcoded via DNS lookup. Without an
-  explicit `metadata.name`, Pulumi had autonamed the actual Services
-  `redis-leader-849ccbfc` and `redis-replica-de4806ae` - neither matched what
-  the app was looking up.
-- **Root cause category:** naming (Kubernetes Service DNS name mismatch, not a
-  namespace/port/ingress issue).
-- **Corrective change:** pinned `metadata.name: "redis-leader"` and
-  `metadata.name: "redis-follower"` explicitly on the two app-facing Services in
-  `guestbook.ts` (the `-metrics` Services used by Prometheus were unaffected and
-  left autonamed).
-- **Validation:** `pulumi preview` showed exactly a 2-resource replace (just
-  those Services); after `pulumi up`, direct `curl` calls to
-  `cmd=set&key=messages&value=...` followed by `cmd=get` round-tripped the
-  value correctly, confirmed via `kubectl get endpoints -n guestbook
-  redis-leader redis-follower` showing populated endpoints.
-- **Preventive control:** none beyond the fix itself; this class of issue (an
-  external image's hardcoded hostname expectations) can't be caught by `pulumi
-  preview` or type-checking - it would need a post-deploy smoke test (e.g. an
-  automated `cmd=set`/`cmd=get` round-trip) to catch automatically. Not
-  currently in the pipeline; listed under "Known limitations" below.
-
-## Rollback and recovery
-
-- **Application/infra rollback:** `git revert` the offending commit on `main`,
-  then either wait for an approved `Deploy` run or run `pulumi up` manually
-  against the resulting (reverted) program. Pulumi's plan-then-apply model means
-  `pulumi preview` always shows exactly what a rollback would change before it
-  happens.
-- **Pulumi state recovery:** keep a `pulumi stack export` backup before any
-  manual (non-Pulumi) change to a Pulumi-managed resource; if state and reality
-  diverge, use `pulumi refresh` to reconcile (never `pulumi state delete`/`pulumi
-  import` as a first resort - see incident 2).
-- **Stuck/failed Helm release:** `helm list -n <namespace>` to find its real
-  status; if `failed` and blocking a Pulumi `Release` resource, `helm uninstall`
-  it, then `pulumi refresh` before the next `pulumi up` (see incident 2).
-- **Full environment teardown:** `pulumi destroy` (see below) - removes the AKS
-  cluster and its resource group entirely. The `guestbook-cicd-rg` resource
-  group (Pulumi state storage + nothing else) is intentionally separate and
-  outside the Pulumi program itself, so a `pulumi destroy` cannot accidentally
-  delete the state backend it needs to run.
-
-## Known limitations, required permissions, and outstanding issues
-
-- The Azure Pipeline resource itself (and its GitHub trigger/webhook) is not yet
-  created - see "Azure DevOps pipeline" above. Requires one manual, one-time
-  OAuth consent click in the ADO portal; a scripted attempt fails server-side
-  with a known limitation of PAT-based GitHub connections.
-- No automated post-deploy smoke test exists yet (e.g., an automated
-  `cmd=set`/`cmd=get` round-trip against the live guestbook). Incident 3 was
-  only caught by manual testing. Recommended next step: add one as a
-  `DevSecOps`- or `Deploy`-stage step.
-- No SAST tool is wired in; noted as a gap, not silently passed.
-- `gcr.io/google-samples/gb-frontend:v5` carries known HIGH-severity CVEs in its
-  Debian base image with no newer upstream tag available - accepted exception,
-  not a false "clean" result (see "Security findings").
-- The `guestbook-monitoring-ado` service principal (backing the Azure RM service
-  connection) was created directly by the repository owner, not scripted
-  end-to-end - `az ad sp create-for-rbac` plus an RBAC role assignment require
-  Owner/User Access Administrator-equivalent rights on the subscription, which
-  this environment's operating rules reserve for a human to grant. Running
-  `pulumi up` day-to-day only needs Contributor on the two resource groups,
-  already in place for both the deploying user and this service principal.
-- Both the Guestbook and Grafana LoadBalancers are public with no IP allowlist -
-  acceptable for this review/demo context, not a production-appropriate
-  configuration.
-
-## Tear down
-
-```bash
-pulumi destroy
-```
-
-This removes the AKS cluster and resource group along with everything deployed
-onto it, stopping Azure billing.
-
-## Stretch goal status
-
-Done: a custom Grafana dashboard ("Guestbook Overview") is created and
-auto-provisioned by Pulumi (no manual Grafana click-ops), with panels for Redis
-request rate, connected clients, and per-pod resource usage across the Guestbook
-app.
